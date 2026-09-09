@@ -1,0 +1,16 @@
+{
+  "name": "PTT LoRa (lora32)",
+  "version": "1.36",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/lora32/bootloader.bin",  "offset": 4096 },
+        { "path": "firmware/lora32/partitions.bin",  "offset": 32768 },
+        { "path": "firmware/lora32/boot_app0.bin",   "offset": 57344 },
+        { "path": "firmware/lora32/firmware.bin",    "offset": 65536 }
+      ]
+    }
+  ]
+}

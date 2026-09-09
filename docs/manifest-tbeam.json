@@ -1,0 +1,16 @@
+{
+  "name": "PTT LoRa (tbeam)",
+  "version": "1.36",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/tbeam/bootloader.bin",  "offset": 4096 },
+        { "path": "firmware/tbeam/partitions.bin",  "offset": 32768 },
+        { "path": "firmware/tbeam/boot_app0.bin",   "offset": 57344 },
+        { "path": "firmware/tbeam/firmware.bin",    "offset": 65536 }
+      ]
+    }
+  ]
+}

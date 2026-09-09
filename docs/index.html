@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PTT LoRa · instalar el firmware</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 46rem; margin: 0 auto;
+         padding: 2rem 1.2rem 4rem; }
+  h1 { font-size: 1.8rem; margin-bottom: .2rem; }
+  .sub { opacity: .75; margin-top: 0; }
+  .placa { border: 1px solid rgba(128,128,128,.35); border-radius: .7rem;
+           padding: 1.1rem 1.3rem; margin: 1.2rem 0; }
+  .placa h2 { margin: 0 0 .2rem; font-size: 1.15rem; }
+  .placa p { margin: .2rem 0 .9rem; opacity: .8; font-size: .93rem; }
+  .aviso { border-left: 3px solid #d08400; padding: .1rem 0 .1rem .9rem;
+           margin: 1.4rem 0; }
+  .no-serie { display: none; }
+  code { background: rgba(128,128,128,.16); padding: .1em .35em; border-radius: .3em; }
+  footer { margin-top: 3rem; font-size: .9rem; opacity: .7; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+
+<h1>PTT LoRa</h1>
+<p class="sub">Instala el firmware en tu placa desde aquí. No hace falta
+instalar nada en el ordenador.</p>
+
+<p><strong>Conecta la placa por USB, pulsa el botón de tu modelo y elige el
+puerto.</strong> Tarda menos de un minuto.</p>
+
+<div class="aviso">
+  <strong>Tiene que ser la versión de 433 MHz.</strong> Estas placas se venden
+  también en 868 y 915 MHz, y ésas llevan otro chip de radio que no sintoniza
+  esta banda. Míralo antes: es lo único que no se arregla con software.
+</div>
+
+<div class="placa">
+  <h2>LilyGO LoRa32 v2.1 <span style="opacity:.6">(T3 v1.6.1)</span></h2>
+  <p>ESP32 + SX1278, pantalla OLED. La de dejar puesta en un sitio.</p>
+  <esp-web-install-button manifest="manifest-lora32.json"></esp-web-install-button>
+</div>
+
+<div class="placa">
+  <h2>LilyGO T-Beam v1.2</h2>
+  <p>ESP32 + SX1278, con GPS y batería 18650. La de llevar encima.</p>
+  <esp-web-install-button manifest="manifest-tbeam.json"></esp-web-install-button>
+</div>
+
+<p class="no-serie" id="aviso-navegador">
+  <strong>Tu navegador no puede hablar con el puerto serie.</strong> Hace falta
+  <strong>Chrome o Edge en ordenador</strong> (no funciona en móvil ni en
+  Firefox/Safari). Si no puedes, están el flasheo con PlatformIO y con
+  <code>esptool</code> explicados en el README.
+</p>
+
+<h2>Y después</h2>
+<p>Instala la app de Android, escribe <strong>tu indicativo</strong> y elige el
+nodo. Sin indicativo el nodo sale como <code>NOCALL</code> y no debe transmitir:
+esto es para radioaficionados con licencia.</p>
+
+<footer>
+  <a href="https://github.com/pyopower/pttLoRa">github.com/pyopower/pttLoRa</a>
+  · Apache 2.0 · el firmware se queda en 430-440 MHz
+</footer>
+
+<script>
+  if (!('serial' in navigator)) {
+    document.getElementById('aviso-navegador').style.display = 'block';
+  }
+</script>
+</body>
+</html>
