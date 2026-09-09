@@ -256,7 +256,15 @@ firmware nuevo no ha entrado.
 
 ### La app
 
-El códec no va en el repositorio, así que hay un paso más:
+**Antes de nada: no hace falta compilarla.** El APK está listo:
+
+| descarga | para |
+|---|---|
+| **[pttlora.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
+| [pttlora-v7a.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora-v7a.apk) | sólo 32 bits, para móviles viejos |
+
+Si aun así quieres compilarla, el códec no va en el repositorio y hay un paso
+más:
 
 ```bash
 cd app
