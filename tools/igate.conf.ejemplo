@@ -28,11 +28,11 @@ puerto = 14580
 # si se pasa. Con `nombre` y `bateria` detras, la linea de arriba se queda en
 # unos 26. El dia que el proyecto tenga URL publica, cabe asi:
 #
-#   comentario = 434.400MHz Voice over LoRa pttlora.adan.ovh
+#   comentario = 439.600MHz Voice over LoRa pttlora.adan.ovh
 #   extras =
 #
 # ...o quitando solo la bateria (`extras = nombre`) si la URL es corta.
-comentario = 434.400MHz Voice over LoRa
+comentario = 439.600MHz Voice over LoRa
 
 # Que se le pega detras: `nombre` del cacharro y/o `bateria`. Vacio = nada.
 # La bateria se quito el 8-sep: con ella, `celdaCERRO` se iba a 46 caracteres.

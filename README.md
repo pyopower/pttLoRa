@@ -11,7 +11,7 @@ Cada nodo hace las tres cosas a la vez y sin configurar nada:
 - **Testigo**: una placa suelta con batería ya extiende la red.
 
 **Estado: validado en el aire.** Voz real entre móvil y nodo y entre nodos, a
-434,400 MHz con Codec2 1200. Alcance medido con un T-Beam, antena micro SMA y
+439,600 MHz con Codec2 1200. Alcance medido con un T-Beam, antena micro SMA y
 50 mW: **3,2 km sin visión directa con cero lotes perdidos** — y oyendo mejor
 que a 1,75 km *con* visión. La conclusión no es el número: **la distancia es casi
 irrelevante y manda la geometría. No se planifica por radios, se planifica por
@@ -105,7 +105,7 @@ información y no un fallo.
 ## Uso legal
 
 **Esto es para radioaficionados con licencia.** El perfil que viene de fábrica —
-434,400 MHz, 17 dBm, voz sin cifrar — es legal en el servicio de aficionados y
+439,600 MHz, 17 dBm, voz sin cifrar — es legal en el servicio de aficionados y
 en ningún otro. Tres cosas que conviene tener claras antes de encender:
 
 - **La banda.** 430-440 MHz está atribuida al servicio de aficionados en las tres
@@ -151,7 +151,7 @@ pero no se limita: dentro de la banda es decisión del operador.
 
 | Parámetro | Valor |
 |---|---|
-| Frecuencia | 434.400 MHz |
+| Frecuencia | 439.600 MHz |
 | Ancho de banda | 250 kHz |
 | Spreading factor | 7 |
 | Coding rate | 4/5 |
@@ -163,10 +163,35 @@ pero no se limita: dentro de la banda es decisión del operador.
 saltos (218 % del canal). Para voz hay que quedarse en SF7 y comprar alcance con
 potencia y antena.
 
-**434.400 es provisional.** Se eligió por convivencia (a 625 kHz del LoRa APRS de
-433.775, lejos de la basura ISM de 433.92 y del hueco por defecto de Meshtastic).
-Antes de proponerlo como canal de comunidad hay que contrastarlo con el bandplan
-IARU R1 vigente y el plan nacional.
+**439.600, y el porqué importa.** Se empezó en 434.400 y **estaba mal**: ese
+canal cae en el tramo `434,000-434,594` del plan de bandas UHF de la IARU R1,
+que tiene un máximo de **12 kHz de ancho de banda**. Un canal LoRa a BW 250 es
+veinte veces eso, sentado encima de una veintena de canales de 12,5 kHz de otra
+gente. Que el plan sea una recomendación y no una ley no lo arregla.
+
+439.600 sale de mirar dónde deja sitio el propio plan. El bloque `438-440` está
+marcado con ancho de banda **`none`** —sin límite— y dentro de él queda un hueco
+sin nada asignado:
+
+```
+438,000 - 440,000   ancho: none   All mode
+    438,025 - 438,175   Digital communication channels
+    438,200 - 438,525   Digital communication repeater channels
+    438,550 - 438,625   Multi mode
+    438,650 - 439,425   Repeater output channels (7.6 MHz shift)
+    ······· 439,425 - 439,800 · sin asignar ·······   <- el canal va aquí
+    439,800 - 439,975   Digital communication link channels
+```
+
+A BW 250 ocupa **439,475-439,725**, con margen por los dos lados. Y de regalo
+queda **fuera de la banda ISM** (433,05-434,79), donde se compartía sitio con
+mandos de garaje, estaciones meteorológicas y el propio LoRa APRS.
+
+⚠️ **Contrasta esto con TU plan nacional antes de encender.** Los planes
+nacionales subdividen ese bloque de formas distintas: el del RSGB británico, por
+ejemplo, usa `439,400-439,775` para salidas de repetidor de voz digital y
+reserva `439,900-439,9875` para *Low Power LoRa Gateways*. Un canal de 250 kHz
+se oye lejos, así que mira también el plan de tus vecinos.
 
 ## Elección de códec
 

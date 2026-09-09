@@ -111,8 +111,21 @@ class Prefs(ctx: Context) {
     /** Frecuencia en kHz. 434.400 por convivencia con el LoRa APRS de 433.775
      *  y lejos de la basura ISM de 433.92. Es provisional: antes de proponerlo
      *  como canal de comunidad hay que contrastarlo con el bandplan de la IARU. */
+    /** El canal, en kHz. **439.600 desde la 0.9.27**: 434.400 caía en un tramo
+     *  del plan IARU R1 con un máximo de 12 kHz de ancho de banda, y un canal
+     *  LoRa son 250.
+     *
+     *  ⚠️ Y CON MIGRACIÓN, que si no el cambio no sirve de nada: quien ya tenga
+     *  la app guarda 434400 en sus ajustes, el valor por defecto nuevo no le
+     *  llega nunca, y en cuanto entre en Radio y pulse Guardar **le devuelve el
+     *  canal viejo al nodo**. Se reconoce por el valor exacto del antiguo
+     *  defecto: si alguien lo había cambiado a mano a otra cosa, se le respeta. */
     var frecuenciaKHz: Int
-        get() = p.getInt("frecKHz", 434400)
+        get() {
+            val v = p.getInt("frecKHz", 439600)
+            if (v == 434400) { frecuenciaKHz = 439600; return 439600 }
+            return v
+        }
         set(v) = p.edit().putInt("frecKHz", v).apply()
 
     /** SPREADING FACTOR y ANCHO DE BANDA. Estaban fijos en el código (7 y 250)
