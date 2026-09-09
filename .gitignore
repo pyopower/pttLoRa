@@ -14,6 +14,12 @@ firmware/build/
 firmware/.pio/
 *.apk
 *.aab
+# ...MENOS los que se publican: la pagina de instalacion los sirve como fichero
+# estatico porque el enlace de descarga de un release son tres redirecciones a
+# una URL firmada, y el gestor de descargas de Chrome en Android se cuelga con
+# eso. Estos SI van en el repositorio a proposito.
+!docs/pttlora.apk
+!docs/pttlora-v7a.apk
 
 # ---- material de pruebas: se regenera y no aporta historia ----
 bench/*.wav
