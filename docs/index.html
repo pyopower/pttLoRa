@@ -17,7 +17,11 @@
   .placa p { margin: .2rem 0 .9rem; opacity: .8; font-size: .93rem; }
   .aviso { border-left: 3px solid #d08400; padding: .1rem 0 .1rem .9rem;
            margin: 1.4rem 0; }
-  .no-serie { display: none; }
+  .navegador { border: 1px solid rgba(128,128,128,.35); border-left: 4px solid #2f7fd0;
+               border-radius: .5rem; padding: .8rem 1.1rem; margin: 1.4rem 0;
+               font-size: .95rem; }
+  .navegador.mal { border-left-color: #c0392b; background: rgba(192,57,43,.08); }
+  .navegador .titulo { font-weight: 600; }
   code { background: rgba(128,128,128,.16); padding: .1em .35em; border-radius: .3em; }
   footer { margin-top: 3rem; font-size: .9rem; opacity: .7; }
   a { color: inherit; }
@@ -28,6 +32,17 @@
 <h1>PTT LoRa</h1>
 <p class="sub">Instala el firmware en tu placa desde aquí. No hace falta
 instalar nada en el ordenador.</p>
+
+<div class="navegador" id="navegador">
+  <p class="titulo" id="navegador-titulo">Antes de empezar: hace falta Chrome o
+  Edge, en un ordenador.</p>
+  <p style="margin:.35rem 0 0" id="navegador-texto">
+  Quien escribe la placa es el propio navegador, hablando con el puerto serie
+  (WebSerial). <strong>Firefox y Safari no lo implementan</strong>, y
+  <strong>desde el móvil no funciona</strong> con ningún navegador. Si no puedes
+  usar Chrome o Edge, abajo tienes el flasheo con PlatformIO o
+  <code>esptool</code>.</p>
+</div>
 
 <p><strong>Conecta la placa por USB, pulsa el botón de tu modelo y elige el
 puerto.</strong> Tarda menos de un minuto.</p>
@@ -50,13 +65,6 @@ puerto.</strong> Tarda menos de un minuto.</p>
   <esp-web-install-button manifest="manifest-tbeam.json"></esp-web-install-button>
 </div>
 
-<p class="no-serie" id="aviso-navegador">
-  <strong>Tu navegador no puede hablar con el puerto serie.</strong> Hace falta
-  <strong>Chrome o Edge en ordenador</strong> (no funciona en móvil ni en
-  Firefox/Safari). Si no puedes, están el flasheo con PlatformIO y con
-  <code>esptool</code> explicados en el README.
-</p>
-
 <h2>Y después</h2>
 <p>Instala la app de Android, escribe <strong>tu indicativo</strong> y elige el
 nodo. Sin indicativo el nodo sale como <code>NOCALL</code> y no debe transmitir:
@@ -68,8 +76,19 @@ esto es para radioaficionados con licencia.</p>
 </footer>
 
 <script>
+  /* El aviso se ve SIEMPRE, y se vuelve rojo cuando de verdad no se puede: quien
+     llega con Firefox tiene que entender por qué el botón no le va a servir
+     ANTES de pulsarlo, no después. */
   if (!('serial' in navigator)) {
-    document.getElementById('aviso-navegador').style.display = 'block';
+    var c = document.getElementById('navegador');
+    c.className = 'navegador mal';
+    document.getElementById('navegador-titulo').textContent =
+      'Este navegador no puede instalar la placa.';
+    document.getElementById('navegador-texto').innerHTML =
+      'No tiene WebSerial, así que no puede hablar con el puerto serie. Ábrelo ' +
+      'en <strong>Chrome o Edge desde un ordenador</strong> ' +
+      '(Firefox, Safari y cualquier navegador de móvil quedan fuera), o usa el ' +
+      'flasheo con PlatformIO o <code>esptool</code> que está en el README.';
   }
 </script>
 </body>

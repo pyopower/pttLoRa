@@ -178,8 +178,13 @@ lo que emite.
 👉 **https://pyopower.github.io/pttLoRa/**
 
 Conecta la placa por USB, pulsa el botón de tu modelo, elige el puerto y listo.
-Menos de un minuto. Hace falta **Chrome o Edge en un ordenador** — es el
-navegador quien habla con el puerto serie, y eso Firefox y Safari no lo hacen.
+Menos de un minuto.
+
+> ⚠️ **Hace falta Chrome o Edge, y desde un ordenador.** Quien escribe la placa
+> es el propio navegador, hablando con el puerto serie por WebSerial:
+> **Firefox y Safari no lo implementan**, y **desde el móvil no funciona con
+> ningún navegador**. Si no puedes usar Chrome o Edge, abajo tienes el flasheo
+> con PlatformIO o con `esptool`, que valen en cualquier sistema.
 
 <details>
 <summary>Si prefieres hacerlo a mano, o vas a tocar el código</summary>
