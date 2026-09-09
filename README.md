@@ -1,151 +1,215 @@
 # PTT LoRa
 
-Voz digital por LoRa en malla, para radioaficionados con licencia. Un canal, un
-talkgroup, sin cifrado — como nació el LoRa APRS.
+**Hablar por voz con un grupo donde no hay cobertura de nada.** Una placa LoRa
+de unos 30 € y tu móvil Android: sin operador, sin cuota, sin internet y sin
+repetidor de nadie. La cobertura la pones tú.
 
-Cada nodo hace las tres cosas a la vez y sin configurar nada:
+Para **radioaficionados con licencia**: va en 70 cm, sin cifrar, y cada estación
+se identifica con su indicativo.
 
-- **Puente**: si hay un móvil enlazado por BLE o WiFi, es su radio.
-- **Repetidor**: repite lo que oye del canal, con salto menos y espera aleatoria —
-  **sólo si hay alguien a quien repetir, y sólo si no hay una celda a la vista**.
-- **Testigo**: una placa suelta con batería ya extiende la red.
-
-**Estado: validado en el aire.** Voz real entre móvil y nodo y entre nodos, a
-439,600 MHz con Codec2 1200. Alcance medido con un T-Beam, antena micro SMA y
-50 mW: **3,2 km sin visión directa con cero lotes perdidos** — y oyendo mejor
-que a 1,75 km *con* visión. La conclusión no es el número: **la distancia es casi
-irrelevante y manda la geometría. No se planifica por radios, se planifica por
-sombras.**
+**Está funcionando, no es una idea.** Voz real entre móviles a través de la
+radio, y **3,2 km sin visión directa con 50 mW y la antena de la caja**, sin
+perder un solo paquete.
 
 ---
 
-## La idea, en una página
+## Qué hace falta
 
-### Celda y cliente, no una malla de iguales
+**Una placa LoRa de 433 MHz y un móvil Android.** Nada más — ni cuota, ni
+cobertura, ni servidor, ni internet.
 
-Una malla donde todo el mundo repite se ahoga: con dos nodos repitiendo a
-`saltos=3` se perdía el **31 %** de los lotes de voz, porque **mientras un nodo
-repite está sordo** y con lotes cada 480 ms eso se come el siguiente. Callando a
-los clientes, cero. De ahí la arquitectura, que es la de TETRA con un bit:
+⚠️ **La placa tiene que ser la versión de 433 MHz.** LilyGO vende las mismas
+placas en 433, 868 y 915: la de 868/915 lleva un SX1276 que **no sintoniza**
+esta banda y no sirve. Míralo antes de comprar, que es el error más caro y el
+más fácil de cometer.
 
-- **Celda** (`perfil = repetidor fijo`): infraestructura. Repite **siempre**, es
-  la que se pone en alto, la que lleva el enlace de Internet y la que sale en el
-  mapa. Se anuncia como tal en su baliza.
-- **Cliente** (`auto` con una celda a la vista): **no repite**. Donde hay
-  cobertura de infraestructura no hace falta inundar, e inundar es justamente lo
-  que impide que la voz llegue.
-- **Suelto** (`auto` sin celda a la vista): repite, y así dos nodos en el campo
-  siguen formando red sin configurar nada.
+| placa | chip | qué añade | entorno |
+|---|---|---|---|
+| **LilyGO LoRa32 v2.1** (T3 v1.6.1) | ESP32 + SX1278 | pantalla OLED, USB-C | `lora32` |
+| **LilyGO T-Beam v1.2** | ESP32 + SX1278 | **GPS**, batería 18650, gestión AXP2101 | `tbeam` |
 
-Medido: **49 % de entrega inundando, 100 % con celda.**
+Las dos valen para todo. La T-Beam es la de llevar encima: batería y GPS propio.
+La LoRa32 es la de dejar puesta en un sitio.
 
-### Manda la radio; Internet es un comodín
+**El móvil**: cualquiera con **Android 4.4 o posterior**. Se conecta a la placa
+por Bluetooth LE o por WiFi, y la app no necesita Play Services ni cuenta de
+nada. Aviso por experiencia: **el Bluetooth LE va fino de Android 5 en
+adelante**; en 4.4 da guerra, y ahí es mejor conectar por WiFi — la placa
+levanta su propia red si se le pide.
 
-Un nodo puede tener además un **enlace por Internet** con un reflector, y la app
-puede hablar por un **camino de datos** cuando no hay nodo a mano. Pero la base
-del sistema es la radio LoRa, y eso ordena las dos direcciones:
+**La antena importa más que la placa.** Las medidas de arriba son con una antena
+micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
 
-- **Al transmitir**: si hay nodo, se emite por RF **y sólo por RF**. No se pierde
-  a nadie por ello, porque **la celda ya es la pasarela**: lo que sale por la
-  antena y alcanza una celda entra en el reflector y le llega a quien escuche por
-  Internet. Mandarlo además por datos no añade un oyente, duplica lo que la celda
-  ya hacía.
-- **Al recibir**: si la misma voz llega por los dos caminos, se reproduce **la de
-  RF**. La de Internet entra si no hay copia de radio, o si la de radio se calla a
-  mitad de transmisión.
+---
 
-En muchos sitios y en muchos cacharros no habrá más que LoRa, y el sistema se
-diseña para ese caso. Un sistema que manda siempre por los dos acaba funcionando
-por el que nunca falla, y entonces **nadie se entera de que la radio dejó de
-cubrir**.
+## Cómo funciona
 
-⚠️ **El enlace de Internet va en la CELDA, no en un nodo cliente.** Un cliente no
-repite, así que lo que le entra por el enlace llega a *sus* clientes y **nunca
-sale por la antena**. Medido: 28 lotes inyectados con el enlace en un cliente no
-movieron los contadores de la celda; con el enlace en la celda, +40 recibidas y
-+40 repetidas.
+```
+                       ┌──────────────────────────────┐
+                       │  reflector  (un servidor)    │   opcional: une
+                       └───────┬──────────────┬───────┘   zonas que no
+                    Internet   │              │   Internet se oyen entre sí
+   ─── ZONA A ─────────────────┼──────        ┼───────────── ZONA B ───
+                               ▼              ▼
+                          ┌─────────┐    ┌─────────┐   en alto, con antena.
+                          │  CELDA  │    │  CELDA  │   REPITE SIEMPRE y es
+                          └────┬────┘    └────┬────┘   la que da cobertura
+                               │              │
+              radio LoRa,      │              │
+              439,600 MHz  ┌───┴───┐          │
+                           │       │          │
+                       ┌───┴──┐ ┌──┴───┐  ┌───┴──┐   NO repiten: donde hay
+                       │ nodo │ │ nodo │  │ nodo │   celda no hace falta,
+                       └───┬──┘ └───┬──┘  └───┬──┘   y así no se estorban
+                     BLE ó │  WiFi  │         │
+                          📱       📱        📱      hablas desde aquí
+```
 
-### La identidad es de quien habla, no del sitio por donde pasa
+**Tres papeles, un solo firmware, y la placa elige sola:**
 
-Con dos caminos abiertos, la misma voz entra en la red **con dos `src`
-distintos**, porque cada camino la sella con la identidad de *su* nodo — el de
-radio con la MAC de la placa, el de datos con el hash del indicativo. Un
-descarte de duplicados por `(origen, stream, secuencia)` los ve como dos
-estaciones hablando a la vez: uno **se oye a sí mismo con eco** y a los demás se
-les oye **dos veces y descolocados**.
+- **Celda** — la pones en alto, con corriente y buena antena. Repite todo lo que
+  oye, y es la que convierte tres placas sueltas en una red que cubre un valle.
+  Si tiene internet, además une tu zona con otras por un reflector.
+- **Nodo** — la que llevas encima. Habla con tu móvil por Bluetooth o WiFi y se
+  calla cuando hay una celda a la vista, para no estorbar.
+- **Suelto** — sin ninguna celda cerca, dos placas en el campo **ya hacen red**
+  ellas solas y se repiten la una a la otra. No hay nada que configurar.
 
-Lo único idéntico en las dos copias es **quién habla**: el indicativo viaja en el
-INICIO y lo pone el que habla. Por ahí se descarta, en los dos extremos.
+```
+  Sin infraestructura, sin cobertura y sin internet:
 
-### Posición
+      📱── nodo ──────RF──────► nodo ──📱      y aquí sí se repiten
+```
 
-Tres orígenes, y **cada uno se emite de una manera**, según quién sabe dónde
-está el cacharro:
+---
 
-| origen | quién lo sabe | cómo se emite |
-|---|---|---|
-| tecleada | se puso una vez | **baliza cíclica**: es una celda, o sea un sitio |
-| GPS propio | el aparato, él solo | **baliza cíclica**, como un LoRa APRS |
-| del móvil | se la presta un teléfono | **sólo al transmitir** |
+## Para qué sirve
 
-Las dos primeras describen un **aparato**, y un aparato tiene que estar en el
-mapa aunque no hable nadie en todo el día. La tercera es la de una **persona**:
-emitir cada minuto por dónde anda alguien es un rastro que nadie ha pedido, y en
-el INICIO sale **cuando esa estación se identifica de todas formas**. Cuesta 9
-bytes en una trama que ya iba a salir.
+Hablar por voz donde no hay nada. Es un walkie de grupo que **no depende de
+ninguna red**, y al que le pones cobertura tú poniendo una celda en un sitio
+alto.
 
-Va detrás del indicativo y tras un `\0`, con lat y lon como enteros de 4 bytes
-en diezmillonésimas de grado. `tools/igate.py` publica esas posiciones en
-APRS-IS desde el reflector — **no desde la app**: así, para salir en el mapa hay
-que **haber llegado por radio a una celda**, y que un nodo no aparezca es
-información y no un fallo.
+- **Montaña, valles, pistas forestales.** Un grupo con móviles y una placa cada
+  uno se oye a kilómetros sin repetidor de nadie.
+- **Un pueblo o un valle entero** con una sola celda en un tejado.
+- **Emergencias y simulacros**: funciona con la infraestructura caída, y una
+  placa con batería en un collado abre el paso a otro valle.
+- **Salir en el mapa**: la posición de cada uno viaja por la misma radio, y
+  desde una celda con internet se publica en APRS-IS y se ve en aprs.fi.
+- **Experimentar**: el protocolo cabe en una página y las herramientas son
+  Python suelto. Se puede escuchar la red entera con un script de treinta
+  líneas.
+
+Lo que **no** es: no llega a donde llega un repetidor de FM con 25 W, no da
+calidad de teléfono —es Codec2 a 1200 bps, se entiende bien y suena a radio— y
+no es privado: va sin cifrar y a propósito.
 
 ---
 
 ## Uso legal
 
-**Esto es para radioaficionados con licencia.** El perfil que viene de fábrica —
-439,600 MHz, 17 dBm, voz sin cifrar — es legal en el servicio de aficionados y
-en ningún otro. Tres cosas que conviene tener claras antes de encender:
+**Esto es para radioaficionados con licencia.** El perfil de fábrica —439,600
+MHz, 250 kHz de ancho, 17 dBm, voz sin cifrar— está pensado para el servicio de
+aficionados y para ningún otro.
 
-- **La banda.** 430-440 MHz está atribuida al servicio de aficionados en las tres
-  regiones de la UIT, pero el reparto interno, la potencia y los usos permitidos
-  los fija **el plan nacional de cada país**, y no coinciden. Contrasta el canal
-  con tu administración y con el bandplan de la IARU de tu región antes de
-  transmitir. Nadie ha hecho ese trabajo por ti.
-- **La identificación.** El nodo baliza tu indicativo cada minuto y lo mete en la
-  cabecera de cada transmisión. Eso es identificación, y por eso el indicativo no
-  es opcional: un nodo sin configurar no debe salir al aire.
-- **El cifrado.** No hay, y es a propósito. Ocultar el contenido de las
-  comunicaciones está prohibido en el servicio de aficionados (RR 25.2A). Quien
-  quiera privacidad, este no es el proyecto.
+- **Comprueba tu plan nacional antes de encender.** 430-440 MHz está atribuida
+  al servicio de aficionados en las tres regiones de la UIT, pero **el reparto
+  interno lo fija cada país** y no coincide. 439,600 con 250 kHz de ancho ocupa
+  `439,475-439,725`: mira qué hay ahí en tu plan y en el de tus vecinos, porque
+  un canal así se oye lejos. Nadie ha hecho ese trabajo por ti.
+- **Tu indicativo no es opcional.** El nodo lo baliza y lo mete en la cabecera de
+  cada transmisión: eso es la identificación de tu estación. Un nodo sin
+  configurar sale como `NOCALL` y no debe transmitir así.
+- **No hay cifrado, y es a propósito.** Ocultar el contenido está prohibido en el
+  servicio de aficionados (RR 25.2A). Quien busque privacidad, éste no es el
+  proyecto.
 
-**Fuera de la banda de aficionados esto no sirve tal cual.** En Europa, el único
-hueco SRD que admite voz es 869,7-870 MHz (anexo 1, h9 de la ERC/REC 70-03):
-5 mW p.r.a., ancho **≤25 kHz**, LBT y **≤1 minuto por transmisión**. El perfil
-de fábrica —250 kHz y 50 mW— incumple las tres, así que no es cuestión de
-cambiar la frecuencia y ya. En el resto de 863-870 MHz lo que lo impide no es
-que sea voz, es el ciclo de trabajo: con el 1% habitual se transmite 36 segundos
-por hora.
+El firmware **se niega a salir de 430-440 MHz** (`BANDA_MIN`/`BANDA_MAX` en
+`platformio.ini`): rechaza cualquier orden de radio fuera de banda y, si
+encuentra guardada una frecuencia que no vale, vuelve al canal de fábrica al
+arrancar. No pretende detener a nadie —es código abierto y cambiar dos líneas
+son dos minutos— sino evitar lo único que iba a pasar de verdad: un dedo torpe
+escribiendo 443 en vez de 439 y transmitiendo fuera de banda sin enterarse.
+Quien tenga otra atribución cambia esas dos líneas, recompila, y con ello asume
+lo que emite.
 
-### Qué hace el software al respecto
+## Empezar
 
-El SX1278 de estas placas llega de 420 a 520 MHz, mucho más de lo que cubre
-ninguna licencia de aficionado. Así que **el firmware se niega a salir de
-430-440 MHz** (`BANDA_MIN`/`BANDA_MAX` en `platformio.ini`): rechaza el
-`CMD_RADIO` que se vaya de banda, y si encuentra en NVS una frecuencia que no
-vale —guardada por otra versión— vuelve al canal de fábrica al arrancar. La app
-avisa antes de mandarlo, pero quien decide es el nodo: cualquiera puede mandar un
-`CMD_RADIO` con `nodo.py` o con un script.
+**1 · Flashea la placa.**
 
-Esto no detiene a nadie decidido: el firmware es abierto, y cambiar esas dos
-líneas y recompilar son dos minutos. No pretende otra cosa. Lo que evita es lo
-único que iba a pasar de verdad — un dedo torpe escribiendo 443 en vez de 434 y
-transmitiendo fuera de banda sin enterarse.
+```bash
+cd firmware
+pio run                                    # compila lora32 y tbeam
+pio run -e lora32 -t upload                # con la placa conectada por USB
+```
 
-Quien tenga otra atribución, otro servicio u otro país, cambia esas dos líneas y
-compila lo suyo, y con ello asume lo que emite. La potencia, en cambio, se avisa
-pero no se limita: dentro de la banda es decisión del operador.
+**2 · Compila e instala la app.** Codec2 no va en el repositorio; lo trae el
+guión:
+
+```bash
+cd app
+./preparar.sh                              # clona y parchea Codec2
+./gradlew assembleRelease                  # el APK sale en app/build/outputs/
+```
+
+**3 · Enciende, empareja y habla.** Abre la app, entra en **Ajustes**, escribe
+**tu indicativo** —sin él el nodo sale como `NOCALL` y no debe transmitir— y
+elige el nodo: aparece por Bluetooth, o por WiFi si la placa está en tu red. Y
+ya está: pulsa para hablar.
+
+Un consejo para la primera prueba: **baja la potencia a 2 dBm** si tienes las dos
+placas en la misma mesa. A 17 dBm y veinte centímetros se satura el receptor de
+la de al lado y verás tramas corruptas sin motivo aparente.
+
+```bash
+tools/nodo.py radio 439.600 --potencia 2   # para el banco
+```
+
+### El papel de cada placa
+
+**Un solo firmware hace los tres papeles**, y se eligen desde la app sin
+reflashear: obligar a elegir binario es pedirle al usuario un conocimiento que
+no tiene por qué tener.
+
+| Perfil | Qué hace |
+|---|---|
+| **Automático** (por defecto) | Puente para tu móvil, y repetidor sólo cuando hace falta: se calla si ve una celda o si no hay a quién repetir |
+| **Repetidor fijo** (celda) | Repite siempre. Es el de la placa que se pone en alto: puede haber estaciones que le oigan a él y no entre ellas |
+| **Sólo mi radio** | No repite nunca. Para quien no quiera gastar batería ni aire en los demás |
+
+## Herramientas
+
+```bash
+tools/nodo.py estado
+tools/nodo.py config EA1ABC --canal 1 --saltos 3 --potencia 2
+tools/nodo.py escuchar 30
+tools/nodo.py hablar grabacion.wav --modo 1200
+tools/prueba2nodos.py --segundos 4        # dos nodos, los dos puertos abiertos
+tools/pruebawifi.py 192.168.4.1 --radio /dev/ttyACM1   # varios usuarios a la vez
+tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1 # enlace entre dos nodos
+tools/nodovirtual.py --escucha 4461       # punto de reunión en un servidor
+tools/vigila.py /dev/ttyACM1              # lee por el cable el código de acceso
+bench/bench.py voz.wav                    # comparar modos de Codec2 con pérdidas
+tools/ota_bt.py fw.bin --tcp 192.168.1.50 # actualizar el firmware por el enlace
+tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461   # camino de datos
+tools/igate.py --conf igate.conf          # posiciones -> APRS-IS
+```
+
+Las tres piezas de servidor —reflector, nodo de datos e igate— son procesos
+Python sueltos sin dependencias: se ponen en cualquier máquina con un
+`systemd` de diez líneas.
+
+⚠️ **`ota_bt.py` no necesita la clave del WiFi.** Va por el propio enlace KISS
+del puerto 4460, así que sirve igual por cable, por BLE, por WiFi o por un canal
+de mando saliente. La OTA de Arduino del 3232 sí la pide, y ésa es la diferencia
+que hace que se pueda actualizar un nodo instalado en una red ajena.
+
+---
+
+## Cómo está hecho por dentro
+
+A partir de aquí es detalle técnico: sirve para modificarlo o para escribir
+otro cliente, y no hace falta para usarlo.
 
 ## Perfil de canal
 
@@ -163,35 +227,9 @@ pero no se limita: dentro de la banda es decisión del operador.
 saltos (218 % del canal). Para voz hay que quedarse en SF7 y comprar alcance con
 potencia y antena.
 
-**439.600, y el porqué importa.** Se empezó en 434.400 y **estaba mal**: ese
-canal cae en el tramo `434,000-434,594` del plan de bandas UHF de la IARU R1,
-que tiene un máximo de **12 kHz de ancho de banda**. Un canal LoRa a BW 250 es
-veinte veces eso, sentado encima de una veintena de canales de 12,5 kHz de otra
-gente. Que el plan sea una recomendación y no una ley no lo arregla.
-
-439.600 sale de mirar dónde deja sitio el propio plan. El bloque `438-440` está
-marcado con ancho de banda **`none`** —sin límite— y dentro de él queda un hueco
-sin nada asignado:
-
-```
-438,000 - 440,000   ancho: none   All mode
-    438,025 - 438,175   Digital communication channels
-    438,200 - 438,525   Digital communication repeater channels
-    438,550 - 438,625   Multi mode
-    438,650 - 439,425   Repeater output channels (7.6 MHz shift)
-    ······· 439,425 - 439,800 · sin asignar ·······   <- el canal va aquí
-    439,800 - 439,975   Digital communication link channels
-```
-
-A BW 250 ocupa **439,475-439,725**, con margen por los dos lados. Y de regalo
-queda **fuera de la banda ISM** (433,05-434,79), donde se compartía sitio con
-mandos de garaje, estaciones meteorológicas y el propio LoRa APRS.
-
-⚠️ **Contrasta esto con TU plan nacional antes de encender.** Los planes
-nacionales subdividen ese bloque de formas distintas: el del RSGB británico, por
-ejemplo, usa `439,400-439,775` para salidas de repetidor de voz digital y
-reserva `439,900-439,9875` para *Low Power LoRa Gateways*. Un canal de 250 kHz
-se oye lejos, así que mira también el plan de tus vecinos.
+El canal ocupa **439,475-439,725 MHz**, y está fuera de la banda ISM, así que
+no se comparte sitio con mandos de garaje ni estaciones meteorológicas. Se
+cambia en `platformio.ini` o en caliente desde la app.
 
 ## Elección de códec
 
@@ -233,47 +271,6 @@ veces por segundo. La identificación de estación queda cubierta: cada pulsaci�
 de PTT abre con INICIO y hay baliza cada 10 minutos.
 
 Dedupe de la malla: `(src, stream, seq, tipo)`, 64 entradas, 30 s.
-
-## Hardware
-
-LilyGO con ESP32 y SX127x. Probado en:
-
-- **LoRa32 v2.1** (T3 v1.6.1) — entorno `lora32`
-- **T-Beam v1.2** (AXP2101) — entorno `tbeam`
-
-En la T-Beam hay que **encender ALDO2 (radio) y ALDO3 (GPS) del AXP2101** o el
-SX1278 no tiene corriente y `radio.begin()` falla.
-
-## Compilar y flashear
-
-```bash
-pio run                          # los cuatro entornos
-esptool --port /dev/ttyACM0 --baud 460800 write-flash -z \
-        0x10000 .pio/build/lora32/firmware.bin
-```
-
-Si cambia la tabla de particiones, flashear también `bootloader.bin` en 0x1000 y
-`partitions.bin` en 0x8000.
-
-Entornos:
-
-| Entorno | Flash | Para qué |
-|---|---|---|
-| `lora32` | 37 % de 3 MB | LilyGO LoRa32 v2.1 |
-| `tbeam` | 38 % | LilyGO T-Beam v1.2 |
-
-**Un solo firmware hace todos los papeles.** Obligar a elegir binario, o a
-reflashear para cambiar de función, es pedirle al usuario un conocimiento que no
-tiene por qué tener. El papel se elige desde la app y se guarda en el nodo:
-
-| Perfil | Qué hace |
-|---|---|
-| **Automático** (por defecto) | Puente + repetidor, callándose la repetición si no hay a quién repetir |
-| **Repetidor fijo** | Repite siempre. Para un nodo en alto sin móvil: puede haber estaciones que le oigan y él no. Apaga el Bluetooth a los 5 min si nadie se conecta, con ventana de gracia en cada arranque |
-| **Solo mi radio** | No repite nunca |
-
-Se usa `huge_app.csv` porque Bluetooth Classic cuesta 828 KB y con el esquema por
-defecto el firmware quedaba al 89 %.
 
 ## Protocolo con el anfitrión (móvil o gateway)
 
@@ -411,33 +408,6 @@ por defecto no es una clave.
 Dos avisos: el ESP32 solo ve redes de **2,4 GHz**, y una actualización dura más
 que el watchdog, así que el firmware se sale de él mientras dura — si no, la
 placa se reiniciaría a medio flashear.
-
-## Herramientas
-
-```bash
-tools/nodo.py estado
-tools/nodo.py config EA1ABC --canal 1 --saltos 3 --potencia 2
-tools/nodo.py escuchar 30
-tools/nodo.py hablar grabacion.wav --modo 1200
-tools/prueba2nodos.py --segundos 4        # dos nodos, los dos puertos abiertos
-tools/pruebawifi.py 192.168.4.1 --radio /dev/ttyACM1   # varios usuarios a la vez
-tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1 # enlace entre dos nodos
-tools/nodovirtual.py --escucha 4461       # punto de reunión en un servidor
-tools/vigila.py /dev/ttyACM1              # lee por el cable el código de acceso
-bench/bench.py voz.wav                    # comparar modos de Codec2 con pérdidas
-tools/ota_bt.py fw.bin --tcp 192.168.1.50 # actualizar el firmware por el enlace
-tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461   # camino de datos
-tools/igate.py --conf igate.conf          # posiciones -> APRS-IS
-```
-
-Las tres piezas de servidor —reflector, nodo de datos e igate— son procesos
-Python sueltos sin dependencias: se ponen en cualquier máquina con un
-`systemd` de diez líneas.
-
-⚠️ **`ota_bt.py` no necesita la clave del WiFi.** Va por el propio enlace KISS
-del puerto 4460, así que sirve igual por cable, por BLE, por WiFi o por un canal
-de mando saliente. La OTA de Arduino del 3232 sí la pide, y ésa es la diferencia
-que hace que se pueda actualizar un nodo instalado en una red ajena.
 
 ## Trampas que costaron tiempo
 
