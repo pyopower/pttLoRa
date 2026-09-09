@@ -27,13 +27,27 @@ placas en 433, 868 y 915: la de 868/915 lleva un SX1276 que **no sintoniza**
 esta banda y no sirve. Míralo antes de comprar, que es el error más caro y el
 más fácil de cometer.
 
-| placa | chip | qué añade | entorno |
+| placa | radio | lleva además | entorno |
 |---|---|---|---|
-| **LilyGO LoRa32 v2.1** (T3 v1.6.1) | ESP32 + SX1278 | pantalla OLED, USB-C | `lora32` |
-| **LilyGO T-Beam v1.2** | ESP32 + SX1278 | **GPS**, batería 18650, gestión AXP2101 | `tbeam` |
+| **LilyGO LoRa32 v2.1** (T3 v1.6.1) | ESP32 + SX1278 | pantalla OLED | `lora32` |
+| **LilyGO T-Beam v1.2** | ESP32 + SX1278 | pantalla, **GPS**, portapilas 18650 | `tbeam` |
 
-Las dos valen para todo. La T-Beam es la de llevar encima: batería y GPS propio.
-La LoRa32 es la de dejar puesta en un sitio.
+**Las dos hacen exactamente lo mismo y los tres papeles**: celda, nodo o suelta.
+Es el mismo firmware y se elige desde la app, así que ninguna es "la de llevar"
+ni "la de dejar puesta" — eso lo decides tú y lo puedes cambiar mañana.
+
+**La LoRa32 es bastante más barata, y para la mayoría sobra.** Si vas a llevarla
+con el móvil al lado, tu posición ya la pone el teléfono: el GPS de la placa no
+te aporta nada. Empieza por ahí y ahórrate la diferencia.
+
+**La T-Beam se gana el precio en dos casos concretos**, los dos con la placa
+sola: cuando quieres que **sepa dónde está sin móvil** —una celda que se dibuja
+en el mapa ella sola, o un rastreador— y cuando quieres **batería sin
+inventártela**, que es lo que necesita una placa en un collado o en una mochila.
+
+Y si la LoRa32 se te queda corta por ahí, no has perdido nada: una placa de más
+en la red es una celda de más, que es justo lo que hace que crezca la
+cobertura.
 
 **El móvil**: cualquiera con **Android 4.4 o posterior**. Se conecta a la placa
 por Bluetooth LE o por WiFi, y la app no necesita Play Services ni cuenta de
