@@ -1,0 +1,16 @@
+# Tabla de particiones de PTT LoRa (flash de 4 MB).
+#
+# Frente a min_spiffs.csv, que es lo que usabamos: se quita el sistema de
+# ficheros SPIFFS (190 KB) porque no lo usamos para nada — la configuracion vive
+# en NVS. Ese espacio se reparte entre las dos ranuras de aplicacion, que es lo
+# que de verdad aprieta.
+#
+# Se MANTIENE coredump: en un nodo instalado en un sitio al que no puedes subir,
+# poder leer por que se reinicio vale mucho mas que 64 KB.
+#
+# Nombre,   Tipo, Subtipo,  Origen,   Tamaño
+nvs,        data, nvs,      0x9000,   0x5000
+otadata,    data, ota,      0xe000,   0x2000
+app0,       app,  ota_0,    0x10000,  0x1F0000
+app1,       app,  ota_1,    0x200000, 0x1F0000
+coredump,   data, coredump, 0x3F0000, 0x10000

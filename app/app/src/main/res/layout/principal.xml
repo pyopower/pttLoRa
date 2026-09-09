@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="12dp">
+
+    <TextView android:id="@+id/estado"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textSize="16sp" android:text="Sin enlace" />
+
+    <TextView android:id="@+id/quien"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textSize="22sp" android:textStyle="bold"
+        android:paddingTop="8dp" android:paddingBottom="8dp" />
+
+    <!-- El PTT ocupa casi toda la pantalla a proposito: se usa a ciegas, con
+         el movil en la mano y sin mirar. -->
+    <Button android:id="@+id/ptt"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1"
+        android:textSize="22sp" android:textStyle="bold"
+        android:textColor="#ffffff"
+        android:text="PULSAR PARA HABLAR" />
+
+    <TextView android:id="@+id/log"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textSize="12sp" android:paddingTop="8dp" android:maxLines="2" />
+
+    <!-- Ajustes y Salir juntos. El de salir hace falta de verdad: esto es un
+         servicio en primer plano y cerrar la pantalla NO lo para, asi que sin
+         un boton la unica salida era forzar el cierre desde Android. -->
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/ajustes"
+            android:layout_width="0dp" android:layout_weight="3"
+            android:layout_height="wrap_content"
+            android:text="Ajustes" />
+        <Button android:id="@+id/salir"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:text="Salir" />
+    </LinearLayout>
+</LinearLayout>

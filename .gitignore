@@ -1,0 +1,27 @@
+# ---- entornos y dependencias, que se reconstruyen ----
+venv/
+tools/__pycache__/
+*.pyc
+app/.gradle/
+app/build/
+app/app/build/
+app/local.properties
+# codec2 no va en el repo: son decenas de MB y se clona con preparar.sh
+app/app/src/main/cpp/codec2/
+
+# ---- binarios compilados ----
+firmware/build/
+firmware/.pio/
+*.apk
+*.aab
+
+# ---- material de pruebas: se regenera y no aporta historia ----
+bench/*.wav
+bench/*.mp3
+bench/*.raw
+bench/salida/
+*.log
+
+# ---- configuracion con datos propios ----
+# `igate.conf.ejemplo` SI va; el de verdad lleva indicativos y no.
+igate.conf

@@ -1,0 +1,31 @@
+PTT LoRa
+Copyright 2026 los autores del proyecto PTT LoRa
+
+Este producto incluye software desarrollado como parte del proyecto PTT LoRa,
+distribuido bajo la licencia Apache 2.0 (ver LICENSE).
+
+------------------------------------------------------------------------------
+DEPENDENCIAS Y SUS LICENCIAS
+------------------------------------------------------------------------------
+
+FIRMWARE DEL NODO (firmware/)
+  RadioLib .................. MIT          jgromes/RadioLib
+  NimBLE-Arduino ............ Apache 2.0   h2zero/NimBLE-Arduino
+  Adafruit SSD1306 / GFX .... BSD          adafruit
+  XPowersLib ................ MIT          lewisxhe/XPowersLib   (solo T-Beam)
+  Arduino core para ESP32 ... LGPL 2.1     espressif/arduino-esp32
+
+  ⚠️ El firmware del nodo NO contiene Codec2. Es una decision de diseño, no una
+  casualidad: el codec vive en los EXTREMOS y el nodo solo mueve bytes.
+
+APP ANDROID (app/)
+  Codec2 .................... LGPL 2.1     drowe67/codec2
+
+  ⚠️ La app enlaza Codec2 estaticamente por NDK, asi que el APK distribuido
+  queda sujeto a la LGPL 2.1. Se cumple publicando el codigo fuente completo de
+  la app —que es lo que hace este repositorio— y esta nota. Codec2 no se
+  incluye en el arbol: lo clona `app/preparar.sh` desde su repositorio oficial.
+
+HERRAMIENTAS (tools/, bench/)
+  Llaman a `c2enc` y `c2dec` como PROGRAMAS EXTERNOS (subprocess). Eso no es
+  enlazado, asi que no arrastran obligaciones de la LGPL.

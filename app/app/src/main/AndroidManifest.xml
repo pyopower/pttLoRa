@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <!-- Desde Android 12 el Bluetooth clasico tambien pide permiso en tiempo
+         de ejecucion. Se declara que NO se usa para localizar, o el sistema
+         exigiria ademas el permiso de ubicacion. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+        android:usesPermissionFlags="neverForLocation" />
+    <!-- Para BUSCAR nodos sin tener que emparejarlos antes desde los ajustes
+         de Android. `neverForLocation` evita que el sistema exija ademas el
+         permiso de ubicacion en Android 12+; en Android 6-11 no hay forma de
+         evitarlo, y por eso la busqueda es opcional: quien no quiera dar
+         ubicacion puede emparejar a mano o escribir la MAC. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <!-- SIN `maxSdkVersion` desde la 0.9.23. Lo tenia porque la ubicacion solo
+         hacia falta para BUSCAR por Bluetooth en Android 6-11 (en 12+ eso lo
+         cubre BLUETOOTH_SCAN con `neverForLocation`). Ahora la app puede
+         mandarle al nodo su posicion para que la baliza la lleve, y para eso
+         hace falta de verdad y en cualquier version. Sigue siendo voluntaria:
+         se pide solo al encender «Posición» en los ajustes. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- SIN ESTO NO HAY NI UN SOCKET.
+         Android hace fallar la creacion de cualquier socket con
+         `socket failed: EACCES (Permission denied)` si falta este permiso, y
+         eso incluye la difusion UDP con la que se buscan los nodos: el usuario
+         ve "sin enlace" al conectar por WiFi Y ademas no encuentra ningun
+         nodo, o sea los dos sintomas a la vez y ninguno apunta al permiso.
+         Faltaba desde el principio y no se noto porque todo se probo por
+         Bluetooth, que no lo necesita. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Para saber cual es la red WiFi y atar a ella el socket del nodo: sin
+         esto el trafico puede salir por los datos moviles y el nodo de la red
+         local queda inalcanzable. Ver `Nodo.redWifi`. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
+    <!-- BLE OBLIGATORIO desde la v0.9.16: el enlace con el nodo dejo de ser
+         Bluetooth Classic (SPP) y pasó a BLE. Se declara `required="true"`
+         porque es la verdad —sin BLE la app no sirve de nada— aunque eso deje
+         fuera a algun movil viejo con Bluetooth pero sin BLE. ⚠️ MERECE LA PENA
+         COMPROBARLO en los moviles antiguos del parque antes de dar la version
+         por buena: BLE existe desde Android 4.3, pero hay cacharros de esa
+         epoca que no lo llevan. -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+    <uses-feature android:name="android.hardware.microphone" android:required="true" />
+
+    <application
+        android:label="PTT LoRa"
+        android:icon="@android:drawable/stat_sys_upload"
+        android:allowBackup="false"
+        android:hardwareAccelerated="true"
+        android:vmSafeMode="true">
+        <!-- vmSafeMode apaga el AOT al instalar. En un POC con Android 6 y 1 GB
+             compilar la app entera al instalarla tarda minutos y llega a
+             colgarse; el trabajo real esta en el .so de Codec2, asi que
+             interpretar el bytecode no se nota. -->
+
+        <activity android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service android:name=".NodoService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+    </application>
+</manifest>

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ⚠️ EL ScrollView NO ES DECORACION.
+     Esto son once filas dentro de un dialogo, y sin el se ven las que quepan y
+     el resto NO EXISTE: no hay scroll, no hay pista de que haya mas, y los
+     ultimos botones (Camino de datos, Actualizar firmware) quedan fuera de la
+     pantalla y no se pueden pulsar. Se vio el 8-sep-2026 en el movil pequeño,
+     y el sintoma —"la app de 32 bits sale distinta y no tiene camino de
+     datos"— no apunta a esto ni de lejos: es el MISMO codigo y el mismo APK
+     salvo por la arquitectura, lo que cambia es la altura de la pantalla.
+     `fillViewport` para que con pantalla de sobra siga ocupando el ancho. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:fillViewport="true">
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:padding="16dp">
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Indicativo (obligatorio: identifica tu estación)" />
+    <EditText android:id="@+id/indicativo"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:inputType="textCapCharacters" android:maxLength="12"
+        android:hint="EA1ABC" />
+
+    <Button android:id="@+id/nodo"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Elegir nodo…" />
+
+    <Button android:id="@+id/modo"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Códec" />
+
+    <Button android:id="@+id/perfil"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Papel del nodo" />
+
+    <Button android:id="@+id/radio"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Radio" />
+
+    <Button android:id="@+id/red"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Red del nodo" />
+
+    <Button android:id="@+id/enlace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Enlace con otros nodos" />
+
+    <Button android:id="@+id/wifi"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="WiFi del nodo" />
+
+    <Button android:id="@+id/datos"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Camino de datos" />
+
+    <Button android:id="@+id/posicion"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Posición" />
+
+    <Button android:id="@+id/firmware"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Actualizar firmware del nodo" />
+</LinearLayout>
+</ScrollView>
