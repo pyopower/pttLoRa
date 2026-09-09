@@ -209,7 +209,8 @@ cd firmware
 pio run -e lora32 -t upload        # o -e tbeam
 ```
 
-O con **esptool**, usando los binarios ya compilados de `docs/firmware/`:
+O con **esptool**, usando los binarios ya compilados —los de `docs/firmware/`, o
+los del [último *release*](https://github.com/pyopower/pttLoRa/releases/latest):
 
 ```bash
 esptool --port /dev/ttyACM0 --baud 460800 write-flash -z \
