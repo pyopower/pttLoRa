@@ -41,8 +41,8 @@ nada. Conectas la placa por USB, pulsas el botón de tu modelo y listo.
 
 | descarga | para |
 |---|---|
-| **[pttlora.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
-| [pttlora-v7a.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora-v7a.apk) | sólo 32 bits, la mitad de tamaño, para móviles viejos |
+| **[pttlora.apk](https://pyopower.github.io/pttLoRa/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
+| [pttlora-v7a.apk](https://pyopower.github.io/pttLoRa/pttlora-v7a.apk) | sólo 32 bits, la mitad de tamaño, para móviles viejos |
 
 Android 4.4 o posterior. Abre la app, entra en **Ajustes**, escribe **tu
 indicativo** y elige el nodo — aparece por Bluetooth, o por WiFi si la placa
@@ -260,8 +260,8 @@ firmware nuevo no ha entrado.
 
 | descarga | para |
 |---|---|
-| **[pttlora.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
-| [pttlora-v7a.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora-v7a.apk) | sólo 32 bits, para móviles viejos |
+| **[pttlora.apk](https://pyopower.github.io/pttLoRa/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
+| [pttlora-v7a.apk](https://pyopower.github.io/pttLoRa/pttlora-v7a.apk) | sólo 32 bits, para móviles viejos |
 
 Si aun así quieres compilarla, el códec no va en el repositorio y hay un paso
 más:
