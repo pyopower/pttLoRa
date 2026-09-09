@@ -49,24 +49,23 @@ micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
 ## Cómo funciona
 
 ```
-                       ┌──────────────────────────────┐
-                       │  reflector  (ya hay uno puesto)  │  opcional: une
-                       └─────┬──────────────────┬─────────┘  zonas que no
-                  Internet   │                  │  Internet  se oyen entre sí
-   ─── ZONA A ─────────────────┼──────        ┼───────────── ZONA B ───
-                               ▼              ▼
-                          ┌─────────┐    ┌─────────┐   en alto, con antena.
-                          │  CELDA  │    │  CELDA  │   REPITE SIEMPRE y es
-                          └────┬────┘    └────┬────┘   la que da cobertura
-                               │              │
-              radio LoRa,      │              │
-              439,600 MHz  ┌───┴───┐          │
-                           │       │          │
-                       ┌───┴──┐ ┌──┴───┐  ┌───┴──┐   NO repiten: donde hay
-                       │ nodo │ │ nodo │  │ nodo │   celda no hace falta,
-                       └───┬──┘ └───┬──┘  └───┬──┘   y así no se estorban
-                     BLE ó │  WiFi  │         │
-                          📱       📱        📱      hablas desde aquí
+    ZONA A                                  ZONA B
+                  ┌──────────────┐
+                  │  reflector   │   opcional, y ya hay uno
+                  └──┬────────┬──┘   puesto: une por internet
+        internet ────┘        └──── internet   zonas que no
+             │                          │      se oyen
+        ┌────┴────┐                ┌────┴────┐
+        │  CELDA  │                │  CELDA  │  en alto y con antena.
+        └────┬────┘                └────┬────┘  REPITE SIEMPRE
+             │  radio LoRa               │
+        ┌────┴────┐                      │
+        │         │                      │
+     ┌──┴───┐  ┌──┴───┐              ┌───┴──┐   no repiten: donde
+     │ nodo │  │ nodo │              │ nodo │   hay celda no hace
+     └──┬───┘  └──┬───┘              └───┬──┘   falta
+    BLE │    WiFi │                      │
+       📱        📱                     📱      hablas desde aquí
 ```
 
 **Tres papeles, un solo firmware, y la placa elige sola:**
@@ -82,7 +81,7 @@ micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
 ```
   Sin infraestructura, sin cobertura y sin internet:
 
-      📱── nodo ──────RF──────► nodo ──📱      y aquí sí se repiten
+      📱── nodo ────RF────► nodo ──📱    aquí sí se repiten
 ```
 
 ---
@@ -276,10 +275,14 @@ Ninguna necesita base de datos ni dependencias: son procesos Python sueltos que
 arrancan con un `systemd` de diez líneas.
 
 ```bash
-tools/nodovirtual.py --escucha 4461                              # reflector
-tools/nododatos.py  --escucha 4460 --reflector 127.0.0.1:4461    # nodo de datos
-tools/igate.py      --conf igate.conf                            # igate APRS
-tools/mandovirtual.py --nodos 4464 --operador 4471               # relevo de mando
+# reflector
+tools/nodovirtual.py --escucha 4461
+# nodo de datos (cuelga del reflector)
+tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461
+# igate a APRS-IS
+tools/igate.py --conf igate.conf
+# relevo de mando
+tools/mandovirtual.py --nodos 4464 --operador 4471
 ```
 
 Para apuntar a tu servidor: en la app, **Ajustes → Enlace con otros nodos** (y
@@ -296,12 +299,16 @@ tools/nodo.py estado
 tools/nodo.py config EA1ABC --canal 1 --saltos 3 --potencia 2
 tools/nodo.py escuchar 30
 tools/nodo.py hablar grabacion.wav --modo 1200
-tools/prueba2nodos.py --segundos 4        # dos nodos, los dos puertos abiertos
-tools/pruebawifi.py 192.168.4.1 --radio /dev/ttyACM1   # varios usuarios a la vez
-tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1 # enlace entre dos nodos
-tools/vigila.py /dev/ttyACM1              # lee por el cable el código de acceso
-bench/bench.py voz.wav                    # comparar modos de Codec2 con pérdidas
-tools/ota_bt.py fw.bin --tcp 192.168.1.50 # actualizar el firmware por el enlace
+
+# actualizar el firmware por el enlace, sin clave de WiFi
+tools/ota_bt.py fw.bin --tcp 192.168.1.50
+
+# banco de pruebas
+tools/prueba2nodos.py --segundos 4          # dos nodos por cable
+tools/pruebawifi.py 192.168.4.1             # varios usuarios a la vez
+tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1
+tools/vigila.py /dev/ttyACM1                # el código de acceso, por cable
+bench/bench.py voz.wav                      # modos de Codec2 con pérdidas
 ```
 
 ⚠️ **`ota_bt.py` no necesita la clave del WiFi.** Va por el propio enlace KISS
