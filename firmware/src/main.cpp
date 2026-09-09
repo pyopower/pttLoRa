@@ -53,6 +53,18 @@
 #endif
 #include "protocolo.h"
 
+/* QUE PLACA ES ESTA. Va en el estado y, sobre todo, **va dentro del binario**:
+   `ota_bt.py` lo busca en el fichero antes de mandarlo y se niega a flashear el
+   firmware de una placa en la otra. Hace falta porque los binarios se llaman
+   parecido y se tarda un segundo en equivocarse — y el patillaje, el PMU y la
+   alimentacion de la radio no tienen nada que ver: la placa arranca muerta y
+   sin puerto por el que decirtelo. */
+#ifdef PLACA_TBEAM
+  #define PLACA "tbeam"
+#else
+  #define PLACA "lora32"
+#endif
+
 // ---- patillaje de la LoRa32 v2.1 ----
 #define P_SCK   5
 #define P_MISO 19
@@ -1447,8 +1459,48 @@ static uint8_t bateria_pct()
     }
     return 0;
 #else
-    // Divisor 2:1 en GPIO35. 4,2 V = 100%, 3,3 V = 0%. Aproximado y de sobra.
-    uint32_t mv = (uint32_t)(analogRead(P_BAT) * 2 * 3300.0 / 4095.0);
+    /* Divisor 2:1 en GPIO35. 4,2 V = 100%, 3,3 V = 0%.
+     *
+     * ⚠️ Y SIN BATERIA PUESTA, ESE PIN FLOTA y da un numero distinto cada vez.
+     * Visto el 9-sep en un registro de balizas: la misma celda enchufada a la
+     * red decia 68 %, 91 %, 77 %, 95 %... porque no habia ninguna pila que
+     * medir. Peor que no dar el dato es darlo mal, asi que se muestrea y, si
+     * los valores bailan, se devuelve 0 = "no lo se" y nadie lo enseña.
+     * Una bateria de verdad es una fuente de tension: sus lecturas apenas se
+     * mueven. */
+    uint32_t suma = 0;
+    for (int i = 0; i < 8; i++) { suma += analogRead(P_BAT); delayMicroseconds(200); }
+    uint32_t mv = (uint32_t)((suma / 8) * 2 * 3300.0 / 4095.0);
+
+    /* ⚠️ EL BAILE HAY QUE MEDIRLO EN MINUTOS, NO EN MICROSEGUNDOS.
+     *
+     * Ocho lecturas seguidas salen casi iguales aunque el pin este al aire: el
+     * ruido rapido lo promedia el propio ADC. Lo que delata que no hay pila es
+     * que el valor DERIVA — en el registro del 9-sep, la misma celda enchufada
+     * a la red decia 68 %, 91 %, 77 % y 95 % con minutos entre medias. Una
+     * bateria es una fuente de tension: no hace eso ni descargandose.
+     * Asi que se guardan las ultimas lecturas (una por baliza, o sea una por
+     * minuto) y se mira el recorrido entre ellas. */
+    static uint32_t hist[16] = {0};
+    static uint8_t nh = 0, llenas = 0;
+    hist[nh] = mv; nh = (nh + 1) % 16; if (llenas < 16) llenas++;
+    if (llenas >= 4) {
+        uint32_t mn = 0xFFFFFFFF, mx = 0;
+        for (uint8_t i = 0; i < llenas; i++) {
+            if (hist[i] < mn) mn = hist[i];
+            if (hist[i] > mx) mx = hist[i];
+        }
+        /* 100 mV sobre una ventana de DIECISEIS lecturas, y las dos cifras
+           salen de medirlo. Con ocho no bastaba: en ocho minutos el pin al aire
+           se movia 70-100 mV, justo por debajo del umbral, y el nodo seguia
+           inventandose un 68 %. La deriva se ve en el cuarto de hora — en la
+           tarde del 9-sep, la misma celda enchufada a la red recorrio del 57 %
+           al 95 %, o sea 340 mV.
+           Un 18650 de verdad no hace eso: cae unas decenas de mV al transmitir
+           y vuelve. Y equivocarse hacia este lado es barato — se pierde el dato
+           de la bateria, que es justo lo que ya no teniamos. */
+        if (mx - mn > 100) return 0;   // deriva: pin al aire, no hay bateria
+    }
     if (mv <= 3300) return 0;
     if (mv >= 4200) return 100;
     return (mv - 3300) * 100 / 900;
@@ -1775,11 +1827,11 @@ static void manda_estado()
        Ver la nota de arriba del fichero sobre `boot_app0`. */
     char s[768];
     snprintf(s, sizeof s,
-             "v%s %s perfil=%s activo=%lum canal=%u saltos=%u %.3fMHz sf%u bw%.0f cr%u %udBm "
+             "v%s(%s) %s perfil=%s activo=%lum canal=%u saltos=%u %.3fMHz sf%u bw%.0f cr%u %udBm "
              "hw=%.0f-%.0fMHz/%u-%udBm banda=%.0f-%.0fMHz rx=%lu tx=%lu rep=%lu "
              "dup=%lu mal=%lu call=%lu vec=%u irq=%lu strx=%d rssi=%.0f bat=%u reset=%s "
              "heap=%u/%u nombre=%s bt=%s ok=%d visible=%d mac=%s%s btatasco=%lu btsalta=%lu ble=%u modo=%s btmodo=%u ampli=%u/%u/%u preamb=%u pos=%s%s wifi=%s",
-             VERSION, mi_indicativo,
+             VERSION, PLACA, mi_indicativo,
              perfil == PERFIL_FIJO ? "repetidor-fijo" :
              (perfil == PERFIL_SOLO ? "solo-nodo" : "auto"),
              (unsigned long)(millis() / 60000UL),

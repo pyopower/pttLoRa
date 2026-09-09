@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nodo import Nodo
 
 CMD_OTA_INI, CMD_OTA_DAT, CMD_OTA_FIN = 0x0B, 0x0C, 0x0D
+CMD_ESTADO = 0x05
 # Trozos pequeños a proposito: cuanto menos ocupe cada trama, menos posibilidad
 # de desbordar la cola de recepcion del Bluetooth del nodo mientras esta
 # ocupado borrando un sector de flash.
@@ -39,6 +40,25 @@ def main():
             if _n.get('n'): _n['n'].s.close()
         except Exception:
             pass
+
+
+def placa_del_binario(datos):
+    """Que placa espera este firmware. La cadena va compilada dentro (`PLACA` en
+    main.cpp) precisamente para poder mirarla desde fuera. Si aparecieran las
+    dos —no deberia— se devuelve None y no se comprueba nada."""
+    hay = [n.decode() for n in (b'tbeam', b'lora32') if datos.find(n) >= 0]
+    return hay[0] if len(hay) == 1 else None
+
+
+def placa_del_nodo(n):
+    """Que placa dice ser el nodo. El estado empieza por `v1.37(tbeam) ...`."""
+    import re
+    n.manda(CMD_ESTADO)
+    for _, p in n.lee(3.0):
+        m = re.match(rb'\s*v[0-9.]+\(([a-z0-9]+)\)', p)
+        if m:
+            return m.group(1).decode()
+    return None
 
 
 def _main():
@@ -82,6 +102,26 @@ def _main():
         if t == 0x87:
             print('!! el nodo pide codigo de acceso: autoriza primero')
             return 1
+
+    # ⚠️ NO FLASHEAR EL FIRMWARE DE UNA PLACA EN LA OTRA.
+    #
+    # El 9-sep casi pasa: las dos placas se administran igual, los binarios se
+    # llaman parecido y basta meterlas en el mismo bucle. Y el error no avisa —
+    # el patillaje, el PMU y la alimentacion de la radio no tienen nada que ver,
+    # asi que la placa arranca muerta y sin puerto por el que quejarse.
+    # La placa va compilada dentro del binario y el nodo la dice en su estado.
+    esperada = placa_del_binario(datos)
+    dice = placa_del_nodo(n)
+    if esperada and dice and esperada != dice:
+        print('\n⛔ ESTE FIRMWARE NO ES DE ESTA PLACA: el fichero es para «%s» '
+              'y el nodo es «%s». No se manda nada.' % (esperada, dice),
+              file=sys.stderr)
+        return 2
+    if esperada and dice:
+        print('-- placa %s: coincide' % dice)
+    elif not dice:
+        print('-- OJO: el nodo no dice su placa (firmware anterior a la v1.37); '
+              'comprueba a mano que el binario es el suyo')
 
     n.manda(CMD_OTA_INI,
             len(datos).to_bytes(4, 'big') + md5.encode('ascii'))

@@ -19,7 +19,7 @@
 #define PROTO_MAGIC   0xA1        // 0xA0 | version 1
 // Version del firmware. Sale en el estado: es como se comprueba que una
 // actualizacion por radio ha entrado de verdad.
-#define VERSION       "1.36"
+#define VERSION       "1.37"
 
 #define MAX_PAYLOAD   200         // holgado para un lote de 960 ms a 1200 bps
 #define MAX_INDICATIVO 12

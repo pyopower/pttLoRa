@@ -96,6 +96,32 @@ class NodoService : Service() {
     private fun porInternet(rssi: Int) = rssi == 127
 
     /* ------------------------------------------------------------------
+     *  ¿ESTÁ VIVA LA RADIO?
+     *
+     *  Hace falta saberlo, y el 9-sep se vio por qué: alguien se alejó de la
+     *  celda, la perdió a las 15:47 —última trama a −88 dBm— y **siguió viendo
+     *  llegar todo por el camino de datos**, así que parecía que la red iba
+     *  bien. Cinco minutos después transmitió once segundos que **no oyó
+     *  nadie**, porque con un nodo conectado la voz sale sólo por RF. Y la app
+     *  no dijo ni una palabra.
+     *
+     *  La señal de que la radio funciona es que **entre algo por la antena**:
+     *  cualquier trama con RSSI que no sea 127. Las celdas balizan cada minuto,
+     *  así que dos minutos y medio de silencio ya no es un hueco, es que no
+     *  llega. */
+    @Volatile private var ultimoRf = 0L
+    /** Lo último que se avisó, para no repetir la línea cada dos segundos.
+     *  Arranca en `true` para que el primer aviso sea el de la pérdida. */
+    private var radioAvisada = true
+    private val RADIO_MUDA_MS = 150_000L
+
+    /** true si por la antena ha entrado algo hace poco. */
+    fun hayRadio(): Boolean {
+        val t = ultimoRf
+        return t > 0L && System.currentTimeMillis() - t < RADIO_MUDA_MS
+    }
+
+    /* ------------------------------------------------------------------
      *  EL DUPLICADO QUE `vistos` NO PUEDE VER, Y EL ECO
      *
      *  `vistos` descarta por (origen, stream, secuencia), que es lo que hace el
@@ -339,6 +365,26 @@ class NodoService : Service() {
                        exactamente lo contrario de lo que la caducidad busca.
                        Se reenvía la última cada 10 minutos: tres veces dentro
                        de la ventana de media hora, así que aguanta perder dos. */
+                    /* AVISAR CUANDO SE PIERDE Y CUANDO VUELVE LA RADIO.
+                       Sin esto, quedarse sin cobertura de RF es invisible: se
+                       sigue oyendo a todo el mundo por el camino de datos y
+                       parece que va bien, mientras lo que tú dices no lo oye
+                       nadie. Es el aviso más importante que da esta app. */
+                    val radio = hayRadio()
+                    if (radio != radioAvisada) {
+                        radioAvisada = radio
+                        if (radio) {
+                            apunta("📻 vuelve la radio")
+                            observador?.onLog("vuelve la radio")
+                        } else {
+                            apunta("⚠️ SIN RADIO: no entra nada por la antena. " +
+                                   if (prefs.datosActivo)
+                                       "Se sigue hablando por Internet."
+                                   else
+                                       "Lo que digas NO LO OYE NADIE.")
+                            observador?.onLog("sin radio")
+                        }
+                    }
                     if (prefs.posActiva && ahora - ultimoPosEnviada >= 600000) {
                         ultimaPos?.let { (la, lo) ->
                             ultimoPosEnviada = ahora
@@ -666,11 +712,20 @@ class NodoService : Service() {
      *  ese dato; se deja para cuando haya una segunda celda y se pueda probar
      *  de verdad. */
     private fun mandaPorTodos(tipo: Int, datos: ByteArray = ByteArray(0)) {
-        if (enlazado) {
-            nodo?.manda(tipo, datos)
-        } else if (prefs.datosActivo) {
-            nodoDatos?.manda(tipo, datos)
-        }
+        if (enlazado) nodo?.manda(tipo, datos)
+        /* Y POR DATOS TAMBIÉN CUANDO LA RADIO NO LLEGA.
+         *
+         * Esto faltaba, y costó once segundos de voz al vacío. La regla es «por
+         * Internet si no pasa por RF», y **un nodo conectado pero fuera de
+         * alcance es exactamente eso**: se emite por la antena y no lo oye
+         * nadie. Antes sólo se miraba si había nodo, que es otra cosa.
+         *
+         * Cuando la radio está muda se manda por LOS DOS y no sólo por datos:
+         * que no oigamos a la celda no demuestra que no nos oiga nadie —puede
+         * haber alguien cerca— y aquí es preferible duplicar que perder la
+         * transmisión. Mientras la radio va bien, esto no se dispara y sigue
+         * saliendo sólo por RF. */
+        if (prefs.datosActivo && !hayRadio()) nodoDatos?.manda(tipo, datos)
     }
 
     /** Si hay a donde conectarse. Sin esto la reconexion daria vueltas en
@@ -740,6 +795,14 @@ class NodoService : Service() {
     // ------------------------------------------------------------ eventos ---
     private fun evento(tipo: Int, p: ByteArray) {
         ota?.alEvento(tipo, p)
+        /* Cualquier cosa que entre por la antena mantiene viva la radio. Se
+           mira ANTES de descartar duplicados: la copia de RF puede ser
+           justamente la que se tire por repetida, y aun así demuestra que la
+           antena está oyendo. */
+        if (p.size >= 1 && (tipo == Nodo.EV_INICIO || tipo == Nodo.EV_VOZ ||
+                            tipo == Nodo.EV_HOLA) && !porInternet(p[0].toInt())) {
+            ultimoRf = System.currentTimeMillis()
+        }
         when (tipo) {
             Nodo.EV_CANAL -> {
                 canalOcupado = p.isNotEmpty() && p[0].toInt() != 0
@@ -816,6 +879,14 @@ class NodoService : Service() {
                 rxQuien = null
             }
             Nodo.EV_HOLA -> if (p.size >= 9) {
+                /* UNA BALIZA, UNA LÍNEA. Llegan hasta tres copias de la misma:
+                   la de la antena y una por cada nodo que la haya metido en el
+                   reflector. El registro se hacía ilegible.
+                   La ventana de 8 s las junta sin tocar las de verdad, que van
+                   cada minuto — y **la de RF llega antes** que la que ha dado
+                   la vuelta por Internet, así que la que se queda es la buena y
+                   el dBm que se ve es real. */
+                if (!nuevo("H:%02x%02x%02x".format(p[2], p[3], p[4]))) return
                 /* [rssi][snr][src×3][stream][flags][batería][indicativo]\0[nombre]
                    Estaba desplazado un byte y el indicativo salía con el byte
                    de batería pegado delante.
@@ -840,8 +911,14 @@ class NodoService : Service() {
                     (f and 0x02) != 0 -> "con móvil"
                     else -> "nodo"
                 }
+                /* La batería sólo se enseña si el nodo la sabe. Un 0 significa
+                   «no tengo de dónde leerla» y enseñarlo como «batería 0%»
+                   asusta sin motivo. */
                 val bat = p[7].toInt() and 0xFF
-                apunta("baliza $quien · $papel · batería $bat% · ${p[0].toInt()} dBm")
+                val pila = if (bat > 0) " · batería $bat%" else ""
+                val via = if (porInternet(p[0].toInt())) "🌐 Internet"
+                          else "📻 ${p[0].toInt()} dBm"
+                apunta("baliza $quien · $papel$pila · $via")
                 observador?.onLog("baliza de $quien (${p[0].toInt()} dBm)")
             }
             /* Con varios usuarios en el mismo nodo, el micrófono es de uno.
