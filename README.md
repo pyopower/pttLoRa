@@ -56,8 +56,8 @@ micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
         internet ────┘        └──── internet   zonas que no
              │                          │      se oyen
         ┌────┴────┐                ┌────┴────┐
-        │  CELDA  │                │  CELDA  │  en alto y con antena.
-        └────┬────┘                └────┬────┘  REPITE SIEMPRE
+        │  CELDA  │                │  CELDA  │  en alto, con
+        └────┬────┘                └────┬────┘  antena, y REPITE
              │  radio LoRa               │
         ┌────┴────┐                      │
         │         │                      │
@@ -100,9 +100,9 @@ cobertura de la red **es la suma de sus celdas**, así que crece añadiendo
 placas, no subiendo potencia.
 
 ```
-   una celda            dos celdas                     cinco celdas
-      ●                    ●━━━━━━●              ●━━━━●━━━━●━━━━●━━━━●
-   un valle          el valle de al lado         toda una comarca
+  una celda        dos celdas           cinco celdas
+     ●                ●━━━━●         ●━━━●━━━●━━━●━━━●
+  un valle      el valle de al lado    una comarca
 ```
 
 Y no hay que elegir cómo se encadenan: **por radio** (una celda oye a la otra y
@@ -218,7 +218,7 @@ Compilarla es un paso más porque el códec no va en el repositorio:
 ```bash
 cd app
 ./preparar.sh                   # clona y parchea Codec2
-./gradlew assembleRelease       # el APK sale en app/build/outputs/
+./gradlew assembleRelease   # el APK, en app/build/outputs/
 ```
 
 ### 3 · Enciende, empareja y habla
@@ -305,10 +305,10 @@ tools/ota_bt.py fw.bin --tcp 192.168.1.50
 
 # banco de pruebas
 tools/prueba2nodos.py --segundos 4          # dos nodos por cable
-tools/pruebawifi.py 192.168.4.1             # varios usuarios a la vez
+tools/pruebawifi.py 192.168.4.1      # varios usuarios a la vez
 tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1
-tools/vigila.py /dev/ttyACM1                # el código de acceso, por cable
-bench/bench.py voz.wav                      # modos de Codec2 con pérdidas
+tools/vigila.py /dev/ttyACM1         # el código, por cable
+bench/bench.py voz.wav               # modos de Codec2
 ```
 
 ⚠️ **`ota_bt.py` no necesita la clave del WiFi.** Va por el propio enlace KISS
@@ -408,7 +408,7 @@ infraestructura de ninguna clase. Hasta **8 sesiones** a la vez, que es lo que
 admite el AP del ESP32.
 
 ```bash
-tools/nodo.py red ap PTTLoRa-EA1ABC <clave>     # y reiniciar el nodo
+tools/nodo.py red ap PTTLoRa-EA1ABC <clave>   # y reiniciar
 tools/nodo.py --tcp 192.168.4.1 --ident EA1XYZ hablar voz.wav
 ```
 
@@ -441,7 +441,7 @@ Dos nodos que no se oyen por radio pueden enlazarse por red, y entonces cada uno
 retransmite por su antena lo que oye el otro.
 
 ```bash
-tools/nodo.py enlace 203.0.113.7 4461      # y el otro nodo escucha en 4461
+tools/nodo.py enlace 203.0.113.7 4461   # el otro escucha ahí
 ```
 
 Por el enlace **no viajan órdenes, viajan tramas del aire tal cual**. El nodo del
@@ -480,7 +480,7 @@ de reunión en un servidor se cae todo eso: **todos los nodos salen, ninguno
 entra**.
 
 ```bash
-tools/nodovirtual.py --escucha 4461      # en un servidor alcanzable
+tools/nodovirtual.py --escucha 4461   # en un servidor
 tools/nodo.py enlace mi-servidor.example 4461     # en cada nodo
 ```
 
@@ -510,7 +510,7 @@ Opcional, y **solo si le pones WiFi al nodo** — que también es opcional. Sirv
 para actualizar un nodo instalado en un sitio al que no puedes subir.
 
 ```bash
-espota.py -i <ip del nodo> -p 3232 -a <clave del wifi> -f firmware.bin
+espota.py -i <ip> -p 3232 -a <clave wifi> -f firmware.bin
 ```
 
 La IP sale en el estado del nodo (`wifi=…`). La clave de actualización **es la
