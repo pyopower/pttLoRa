@@ -120,8 +120,19 @@ def _main():
     if esperada and dice:
         print('-- placa %s: coincide' % dice)
     elif not dice:
-        print('-- OJO: el nodo no dice su placa (firmware anterior a la v1.37); '
-              'comprueba a mano que el binario es el suyo')
+        # ⚠️ SE NIEGA, NO AVISA. Estaba como un simple aviso y era papel mojado
+        # justo donde mas falta hace: un nodo con firmware anterior a la v1.37
+        # no sabe decir que placa es, que es exactamente el caso en el que uno
+        # va a cruzar binarios. Probado el 9-sep contra un T-Beam en v1.36: el
+        # aviso salia y la herramienta mandaba el firmware equivocado igual.
+        # Ante la duda, no se toca la placa.
+        if '--forzar' not in a:
+            print('\n⛔ EL NODO NO DICE QUE PLACA ES (firmware anterior a la '
+                  'v1.37) y este binario es para «%s».\n'
+                  '   Comprueba que es el suyo y repite con --forzar.'
+                  % (esperada or '?'), file=sys.stderr)
+            return 2
+        print('-- el nodo no dice su placa; se fuerza porque lo has pedido')
 
     n.manda(CMD_OTA_INI,
             len(datos).to_bytes(4, 'big') + md5.encode('ascii'))

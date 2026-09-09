@@ -53,17 +53,30 @@ puerto.</strong> Tarda menos de un minuto.</p>
   esta banda. Míralo antes: es lo único que no se arregla con software.
 </div>
 
+<div class="aviso" style="border-left-color:#c0392b">
+  <strong>Y elige bien tu modelo.</strong> Esta página no puede comprobar qué
+  placa tienes conectada —habla con ella antes de que su programa arranque, y
+  las dos llevan el mismo microcontrolador—, así que <strong>escribe lo que
+  pulses</strong>. Con el firmware cruzado la placa arranca muerta: el
+  patillaje, la alimentación de la radio y la gestión de energía no tienen nada
+  que ver entre las dos. Se recupera volviendo a flashear con el fichero bueno,
+  pero te ahorras el susto mirando la placa: <strong>si tiene antena de GPS y
+  portapilas para una 18650 por detrás, es la T-Beam</strong>; si no, es la
+  LoRa32.
+</div>
+
 <div class="placa">
   <h2>LilyGO LoRa32 v2.1 <span style="opacity:.6">(T3 v1.6.1)</span></h2>
-  <p>ESP32 + SX1278 con pantalla OLED. La más barata, y hace de todo:
-     celda, nodo o suelta.</p>
+  <p>ESP32 + SX1278 con pantalla OLED. <strong>Sin GPS y sin portapilas.</strong>
+     La más barata, y hace de todo: celda, nodo o suelta.</p>
   <esp-web-install-button manifest="manifest-lora32.json"></esp-web-install-button>
 </div>
 
 <div class="placa">
   <h2>LilyGO T-Beam v1.2</h2>
-  <p>Lo mismo, más GPS y portapilas 18650. Hace falta sólo si quieres
-     que la placa sepa dónde está <em>sin móvil</em>, o que vaya con batería.</p>
+  <p>Lo mismo, <strong>más GPS y portapilas 18650 por detrás</strong> — así se
+     distingue a simple vista. Hace falta sólo si quieres que la placa sepa
+     dónde está <em>sin móvil</em>, o que vaya con batería.</p>
   <esp-web-install-button manifest="manifest-tbeam.json"></esp-web-install-button>
 </div>
 
