@@ -2,7 +2,11 @@
 
 **Hablar por voz con un grupo donde no hay cobertura de nada.** Una placa LoRa
 de unos 30 € y tu móvil Android: sin operador, sin cuota, sin internet y sin
-repetidor de nadie. La cobertura la pones tú.
+repetidor de nadie.
+
+**Y la cobertura crece añadiendo placas.** Cada celda que pones —la misma placa,
+en alto— extiende la red, y se encadenan por radio o por internet. El límite no
+es la potencia: es cuántas quieras poner, y valen 30 € cada una.
 
 Para **radioaficionados con licencia**: va en 70 cm, sin cifrar, y cada estación
 se identifica con su indicativo.
@@ -86,25 +90,57 @@ micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
 ## Para qué sirve
 
 Hablar por voz donde no hay nada. Es un walkie de grupo que **no depende de
-ninguna red**, y al que le pones cobertura tú poniendo una celda en un sitio
-alto.
+ninguna red** — y la cobertura no es la que te toque: es la que tú decidas
+poner.
+
+### La cobertura se compra por celdas, no por vatios
+
+Aquí está la idea que lo cambia todo. Una celda **no es un repetidor caro**: es
+la misma placa de 30 €, en alto, con corriente y una antena decente. Y la
+cobertura de la red **es la suma de sus celdas**, así que crece añadiendo
+placas, no subiendo potencia.
+
+```
+   una celda            dos celdas                     cinco celdas
+      ●                    ●━━━━━━●              ●━━━━●━━━━●━━━━●━━━━●
+   un valle          el valle de al lado         toda una comarca
+```
+
+Y no hay que elegir cómo se encadenan: **por radio** (una celda oye a la otra y
+repite) o **por internet** (cada celda con red se engancha al mismo reflector y
+dos zonas que no se oyen quedan unidas). Lo normal es mezclarlo.
+
+Lo que eso ahorra frente a montar un repetidor de verdad: **sin duplexor, sin
+cavidades, sin PA, sin torre, sin alquiler de emplazamiento y sin coordinación
+de frecuencia**. Una celda entera cabe en una caja estanca con un panel solar.
+
+Y escala de verdad, medido: **veinte nodos balizando cada minuto ocupan el
+1,37 % del canal**. La red no se ahoga al crecer, porque los nodos que ven una
+celda **se callan** en vez de repetir — es justo lo contrario de una malla, donde
+cada nodo nuevo empeora la red.
+
+**Por eso la comparación con un repetidor de FM no va por vatios.** Ese
+repetidor, con toda su potencia, **no entra en el valle que tiene detrás**: la
+sombra no se rompe con más vatios. Aquí la rompes poniendo otra placa de 30 € en
+el sitio donde cae. Medido: a 3,2 km sin visión directa se oía **mejor** que a
+1,75 km con visión. **No se planifica por radios, se planifica por sombras.**
+
+### Casos concretos
 
 - **Montaña, valles, pistas forestales.** Un grupo con móviles y una placa cada
   uno se oye a kilómetros sin repetidor de nadie.
 - **Un pueblo o un valle entero** con una sola celda en un tejado.
+- **Un club o una comarca**: cada socio pone una celda donde puede y la red
+  crece sola, sin permisos ni infraestructura compartida que gestionar.
 - **Emergencias y simulacros**: funciona con la infraestructura caída, y una
-  placa con batería en un collado abre el paso a otro valle.
+  placa con batería en un collado abre el paso a otro valle en cinco minutos.
 - **Salir en el mapa**: la posición de cada uno viaja por la misma radio, y
   desde una celda con internet se publica en APRS-IS y se ve en aprs.fi.
 - **Experimentar**: el protocolo cabe en una página y las herramientas son
-  Python suelto. Se puede escuchar la red entera con un script de treinta
-  líneas.
+  Python suelto. Se escucha la red entera con un script de treinta líneas.
 
-Lo que **no** es: no llega a donde llega un repetidor de FM con 25 W, no da
-calidad de teléfono —es Codec2 a 1200 bps, se entiende bien y suena a radio— y
-no es privado: va sin cifrar y a propósito.
-
----
+Lo que **no** es: no da calidad de teléfono —es Codec2 a 1200 bps, se entiende
+bien y suena a radio— y no es privado, porque va sin cifrar y a propósito.
 
 ## Uso legal
 
