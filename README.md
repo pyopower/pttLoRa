@@ -188,7 +188,7 @@ lo que emite.
 
 **Lo más fácil, desde el navegador y sin instalar nada:**
 
-👉 **https://descargas.adan.ovh/flash/**
+👉 **https://pyopower.github.io/pttLoRa/**
 
 Conecta la placa por USB, pulsa el botón de tu modelo, elige el puerto y listo.
 Menos de un minuto.
