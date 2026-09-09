@@ -17,7 +17,51 @@ perder un solo paquete.
 
 ---
 
-## Qué hace falta
+# Empezar
+
+**Tres pasos. Diez minutos.**
+
+### 1 · La placa
+
+Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, en la **versión de 433 MHz**
+(ESP32 + SX1278). ⚠️ Las de 868/915 llevan otro chip y **no sirven**: es lo
+único que no se arregla con software.
+
+### 2 · Grábale el firmware
+
+👉 **https://pyopower.github.io/pttLoRa/** — desde el navegador, sin instalar
+nada. Conectas la placa por USB, pulsas el botón de tu modelo y listo.
+
+> Hace falta **Chrome o Edge en un ordenador**: es el navegador quien habla con
+> el puerto serie, y Firefox, Safari y los navegadores de móvil no lo hacen.
+> ¿Prefieres a mano? [Binarios sueltos](https://github.com/pyopower/pttLoRa/releases/latest)
+> y las órdenes de `esptool` más abajo.
+
+### 3 · Instala la app
+
+| descarga | para |
+|---|---|
+| **[pttlora.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
+| [pttlora-v7a.apk](https://github.com/pyopower/pttLoRa/releases/latest/download/pttlora-v7a.apk) | sólo 32 bits, la mitad de tamaño, para móviles viejos |
+
+Android 4.4 o posterior. Abre la app, entra en **Ajustes**, escribe **tu
+indicativo** y elige el nodo — aparece por Bluetooth, o por WiFi si la placa
+está en tu red. Y ya puedes hablar.
+
+⚠️ Sin indicativo el nodo sale como `NOCALL` y no debe transmitir: **esto es
+para radioaficionados con licencia**, en 70 cm y sin cifrar.
+
+**No necesitas ningún servidor.** Ya hay uno funcionando y la app apunta ahí de
+fábrica; sólo hace falta el tuyo si quieres una red aparte.
+
+---
+
+*Lo que sigue es el porqué de todo: para qué sirve, cómo funciona y cómo está
+hecho. No hace falta para usarlo.*
+
+---
+
+## El hardware, en detalle
 
 **Una placa LoRa de 433 MHz y un móvil Android.** Nada más — ni cuota, ni
 cobertura, ni servidor, ni internet.
@@ -182,25 +226,11 @@ escribiendo 443 en vez de 439 y transmitiendo fuera de banda sin enterarse.
 Quien tenga otra atribución cambia esas dos líneas, recompila, y con ello asume
 lo que emite.
 
-## Empezar
+## Compilar a mano
 
-### 1 · Instala el firmware en la placa
+Para tocar el código, o si no puedes usar el instalador del navegador.
 
-**Lo más fácil, desde el navegador y sin instalar nada:**
-
-👉 **https://pyopower.github.io/pttLoRa/**
-
-Conecta la placa por USB, pulsa el botón de tu modelo, elige el puerto y listo.
-Menos de un minuto.
-
-> ⚠️ **Hace falta Chrome o Edge, y desde un ordenador.** Quien escribe la placa
-> es el propio navegador, hablando con el puerto serie por WebSerial:
-> **Firefox y Safari no lo implementan**, y **desde el móvil no funciona con
-> ningún navegador**. Si no puedes usar Chrome o Edge, abajo tienes el flasheo
-> con PlatformIO o con `esptool`, que valen en cualquier sistema.
-
-<details>
-<summary>Si prefieres hacerlo a mano, o vas a tocar el código</summary>
+### El firmware
 
 Con **PlatformIO** (compila y flashea de una vez):
 
@@ -224,11 +254,9 @@ esptool --port /dev/ttyACM0 --baud 460800 write-flash -z \
 actualización por radio la placa arranca desde la otra ranura y parece que el
 firmware nuevo no ha entrado.
 
-</details>
+### La app
 
-### 2 · Instala la app en el móvil
-
-Compilarla es un paso más porque el códec no va en el repositorio:
+El códec no va en el repositorio, así que hay un paso más:
 
 ```bash
 cd app
@@ -236,12 +264,7 @@ cd app
 ./gradlew assembleRelease   # el APK, en app/build/outputs/
 ```
 
-### 3 · Enciende, empareja y habla
-
-Abre la app, entra en **Ajustes**, escribe **tu indicativo** y elige el nodo:
-aparece por Bluetooth, o por WiFi si la placa está en tu red. Pulsa para hablar.
-
-Sin indicativo el nodo sale como `NOCALL` y no debe transmitir así.
+### En el banco de pruebas
 
 Un consejo para la primera prueba: **baja la potencia a 2 dBm** si tienes dos
 placas en la misma mesa. A 17 dBm y veinte centímetros se satura el receptor de
