@@ -50,9 +50,9 @@ micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
 
 ```
                        ┌──────────────────────────────┐
-                       │  reflector  (un servidor)    │   opcional: une
-                       └───────┬──────────────┬───────┘   zonas que no
-                    Internet   │              │   Internet se oyen entre sí
+                       │  reflector  (ya hay uno puesto)  │  opcional: une
+                       └─────┬──────────────────┬─────────┘  zonas que no
+                  Internet   │                  │  Internet  se oyen entre sí
    ─── ZONA A ─────────────────┼──────        ┼───────────── ZONA B ───
                                ▼              ▼
                           ┌─────────┐    ┌─────────┐   en alto, con antena.
@@ -249,6 +249,46 @@ no tiene por qué tener.
 | **Repetidor fijo** (celda) | Repite siempre. Es el de la placa que se pone en alto: puede haber estaciones que le oigan a él y no entre ellas |
 | **Sólo mi radio** | No repite nunca. Para quien no quiera gastar batería ni aire en los demás |
 
+## El servidor: ya hay uno puesto
+
+**Para hablar por radio no hace falta ningún servidor.** Dos placas y dos
+móviles ya son una red, y una celda en un tejado cubre un valle sin que nada de
+esto exista. El servidor entra sólo para tres cosas: **unir zonas que no se oyen
+por radio**, **hablar desde el móvil sin placa** y **salir en el mapa de APRS**.
+
+**Y para esas tres ya hay uno funcionando: `or.adan.ovh`.** La app y las
+herramientas vienen apuntando ahí de fábrica, así que **no tienes que instalar
+ni configurar nada** — enciendes y funciona.
+
+Montar el tuyo sólo hace falta si quieres **tu propia red**, separada de la
+pública, o si prefieres no depender de una máquina ajena. Y se puede hacer pieza
+a pieza: cada una es independiente, así que puedes tener tu reflector y seguir
+usando el resto del servidor público, o al revés.
+
+| pieza | puerto | qué hace | ¿montar el mío? |
+|---|---|---|---|
+| **reflector** | 4461 | Punto de reunión de las celdas: une por internet zonas que no se oyen por radio, y arbitra quién habla. | Sólo si quieres una red aparte. Usando el público, tu grupo comparte canal con quien esté. |
+| **nodo de datos** | 4460 | Un nodo sin radio al que se conecta la app: permite hablar **desde el móvil sin placa**, y sirve de red de seguridad cuando la radio no llega. | Sólo si has montado tu propio reflector: va colgado de él. |
+| **igate APRS** | — | Publica en APRS-IS las posiciones que ve en el reflector, y salen en aprs.fi. | **Éste sí conviene propio**: entra en APRS-IS con **tu** indicativo, y decides tú qué estaciones se publican. |
+| **relevo de mando** | 4464 | Administrar y actualizar un nodo instalado en una red ajena, donde no puedes abrir puertos: es el nodo quien llama. | Sólo si tienes una celda en un sitio prestado. |
+
+Ninguna necesita base de datos ni dependencias: son procesos Python sueltos que
+arrancan con un `systemd` de diez líneas.
+
+```bash
+tools/nodovirtual.py --escucha 4461                              # reflector
+tools/nododatos.py  --escucha 4460 --reflector 127.0.0.1:4461    # nodo de datos
+tools/igate.py      --conf igate.conf                            # igate APRS
+tools/mandovirtual.py --nodos 4464 --operador 4471               # relevo de mando
+```
+
+Para apuntar a tu servidor: en la app, **Ajustes → Enlace con otros nodos** (y
+**Camino de datos** para el 4460); desde la consola, `tools/nodo.py enlace
+mi-servidor.example 4461`.
+
+⚠️ **El enlace va en la CELDA, no en un nodo cliente** — si no, lo que entra por
+internet nunca sale por la antena. Está explicado y medido más abajo.
+
 ## Herramientas
 
 ```bash
@@ -259,17 +299,10 @@ tools/nodo.py hablar grabacion.wav --modo 1200
 tools/prueba2nodos.py --segundos 4        # dos nodos, los dos puertos abiertos
 tools/pruebawifi.py 192.168.4.1 --radio /dev/ttyACM1   # varios usuarios a la vez
 tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1 # enlace entre dos nodos
-tools/nodovirtual.py --escucha 4461       # punto de reunión en un servidor
 tools/vigila.py /dev/ttyACM1              # lee por el cable el código de acceso
 bench/bench.py voz.wav                    # comparar modos de Codec2 con pérdidas
 tools/ota_bt.py fw.bin --tcp 192.168.1.50 # actualizar el firmware por el enlace
-tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461   # camino de datos
-tools/igate.py --conf igate.conf          # posiciones -> APRS-IS
 ```
-
-Las tres piezas de servidor —reflector, nodo de datos e igate— son procesos
-Python sueltos sin dependencias: se ponen en cualquier máquina con un
-`systemd` de diez líneas.
 
 ⚠️ **`ota_bt.py` no necesita la clave del WiFi.** Va por el propio enlace KISS
 del puerto 4460, así que sirve igual por cable, por BLE, por WiFi o por un canal

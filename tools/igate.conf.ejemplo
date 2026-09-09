@@ -1,5 +1,10 @@
 # igate.conf — pasarela PTT LoRa -> APRS-IS. Ver igate.py.
 
+# Ojo: esto es para montar TU PROPIO igate. Si sólo quieres usar la red, no
+# hace falta: ya hay un servidor público funcionando y la app apunta ahí de
+# fábrica. Un igate propio tiene sentido porque entra en APRS-IS con TU
+# indicativo y decides tú qué estaciones se publican.
+
 [reflector]
 host = 127.0.0.1
 puerto = 4461
