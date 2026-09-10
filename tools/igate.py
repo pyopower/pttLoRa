@@ -210,8 +210,15 @@ class Igate:
         #
         # Sin esto, una celda aparece en aprs.fi entre miles de estaciones y
         # nadie puede saber que hay detras ni como montarse una.
+        # ⚠️ `{indicativo}` SE SUSTITUYE POR EL DE CADA ESTACION, y no es un
+        # detalle: si aqui hubiera un distintivo escrito a mano, la celda que
+        # monte alguien en otro pais publicaria en aprs.fi «by» el indicativo
+        # de OTRO. En el servicio de aficionados eso no vale, y ademas seria
+        # justo lo contrario de lo que se busca: quien monta una celda quiere
+        # que salga la SUYA. Asi cada uno se atribuye su estacion y el proyecto
+        # sale nombrado igual.
         self.estado = cfg['aprs'].get(
-            'estado', 'PTT LoRa: voz Codec2 por radio '
+            'estado', 'PTT LoRa: by {indicativo} '
                       'github.com/pyopower/pttLoRa').strip()
         # Cada cuanto se repite. No va con cada baliza: una linea que no cambia
         # repetida cada minuto es ruido en APRS-IS y no aporta nada.
@@ -363,7 +370,10 @@ class Igate:
         if ahora - self.ultimo_estado.get(destino, 0) < self.estado_cada:
             return
         self.ultimo_estado[destino] = ahora
-        txt = self.estado.encode('ascii', 'ignore').decode('ascii')
+        # El indicativo de la estacion, sin el SSID: en el estado interesa quien
+        # es, no cual de sus cacharros.
+        txt = self.estado.replace('{indicativo}', destino.split('-')[0])
+        txt = txt.encode('ascii', 'ignore').decode('ascii')
         if len(txt) > 62:
             log('⚠ estado de %d caracteres: APRS garantiza 62 -> "%s"'
                 % (len(txt), txt))

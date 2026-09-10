@@ -46,7 +46,10 @@ puerto = 14580
 # Sin esto, una celda aparece en aprs.fi entre miles de estaciones y no hay
 # forma de saber que hay detras ni como montarse una. Dejalo vacio para no
 # mandarlo.
-estado = PTT LoRa: voz Codec2 por radio github.com/pyopower/pttLoRa
+# `{indicativo}` se sustituye por el de CADA estacion (sin SSID). Dejalo asi:
+# si escribes un distintivo a mano, tu celda publicara «by» el indicativo de
+# quien escribio la plantilla, no el tuyo.
+estado = PTT LoRa: by {indicativo} github.com/pyopower/pttLoRa
 # Cada cuanto se repite, en segundos. No con cada baliza: una linea que no
 # cambia repetida cada minuto es ruido en APRS-IS.
 estado_cada = 1800
