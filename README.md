@@ -1,66 +1,393 @@
 # PTT LoRa
 
-Voz digital por LoRa en malla, para radioaficionados con licencia. Un canal, un
-talkgroup, sin cifrado — como nació el LoRa APRS.
+**Hablar por voz con un grupo donde no hay cobertura de nada.** Una placa LoRa
+de unos 30 € y tu móvil Android: sin operador, sin cuota, sin internet y sin
+repetidor de nadie.
 
-Cada nodo hace las tres cosas a la vez y sin configurar nada:
+**Y la cobertura crece añadiendo placas.** Cada celda que pones —la misma placa,
+en alto— extiende la red, y se encadenan por radio o por internet. El límite no
+es la potencia: es cuántas quieras poner, y valen 30 € cada una.
 
-- **Puente**: si hay un móvil emparejado por Bluetooth, es su radio.
-- **Repetidor**: repite lo que oye del canal, con salto menos y espera aleatoria —
-  **solo si hay alguien a quien repetir**.
-- **Testigo**: una placa suelta con batería ya extiende la red.
+Para **radioaficionados con licencia**: va en 70 cm, sin cifrar, y cada estación
+se identifica con su indicativo.
 
-Estado, trampas aprendidas y hoja de ruta: **[HOJA-DE-RUTA.md](HOJA-DE-RUTA.md)**.
-
-Estado: **firmware y app validados en hardware** (6-sep-2026). Voz real entre dos
-nodos y entre móvil y nodo, en los dos sentidos, a 439,600 MHz con Codec2 1200.
+**Está funcionando, no es una idea.** Voz real entre móviles a través de la
+radio, y **3,2 km sin visión directa con 50 mW y la antena de la caja**, sin
+perder un solo paquete.
 
 ---
 
+# Empezar
+
+**Tres pasos. Diez minutos.**
+
+### 1 · La placa
+
+Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, en la **versión de 433 MHz**
+(ESP32 + SX1278). ⚠️ Las de 868/915 llevan otro chip y **no sirven**: es lo
+único que no se arregla con software.
+
+### 2 · Grábale el firmware
+
+👉 **https://pyopower.github.io/pttLoRa/** — desde el navegador, sin instalar
+nada. Conectas la placa por USB, pulsas el botón de tu modelo y listo.
+
+> Hace falta **Chrome o Edge en un ordenador**: es el navegador quien habla con
+> el puerto serie, y Firefox, Safari y los navegadores de móvil no lo hacen.
+> ¿Prefieres a mano? [Binarios sueltos](https://github.com/pyopower/pttLoRa/releases/latest)
+> y las órdenes de `esptool` más abajo.
+
+### 3 · Instala la app
+
+| descarga | para |
+|---|---|
+| **[pttlora.apk](https://pyopower.github.io/pttLoRa/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
+| [pttlora-v7a.apk](https://pyopower.github.io/pttLoRa/pttlora-v7a.apk) | sólo 32 bits, la mitad de tamaño, para móviles viejos |
+
+Android 4.4 o posterior. Abre la app, entra en **Ajustes**, escribe **tu
+indicativo** y elige el nodo — aparece por Bluetooth, o por WiFi si la placa
+está en tu red. Y ya puedes hablar.
+
+⚠️ Sin indicativo el nodo sale como `NOCALL` y no debe transmitir: **esto es
+para radioaficionados con licencia**, en 70 cm y sin cifrar.
+
+**No necesitas ningún servidor.** Ya hay uno funcionando y la app apunta ahí de
+fábrica; sólo hace falta el tuyo si quieres una red aparte.
+
+---
+
+*Lo que sigue es el porqué de todo: para qué sirve, cómo funciona y cómo está
+hecho. No hace falta para usarlo.*
+
+---
+
+## El hardware, en detalle
+
+**Una placa LoRa de 433 MHz y un móvil Android.** Nada más — ni cuota, ni
+cobertura, ni servidor, ni internet.
+
+⚠️ **La placa tiene que ser la versión de 433 MHz.** LilyGO vende las mismas
+placas en 433, 868 y 915: la de 868/915 lleva un SX1276 que **no sintoniza**
+esta banda y no sirve. Míralo antes de comprar, que es el error más caro y el
+más fácil de cometer.
+
+| placa | radio | lleva además | entorno |
+|---|---|---|---|
+| **LilyGO LoRa32 v2.1** (T3 v1.6.1) | ESP32 + SX1278 | pantalla OLED | `lora32` |
+| **LilyGO T-Beam v1.2** | ESP32 + SX1278 | pantalla, **GPS**, portapilas 18650 | `tbeam` |
+
+**Las dos hacen exactamente lo mismo y los tres papeles**: celda, nodo o suelta.
+Es el mismo firmware y se elige desde la app, así que ninguna es "la de llevar"
+ni "la de dejar puesta" — eso lo decides tú y lo puedes cambiar mañana.
+
+**La LoRa32 es bastante más barata, y para la mayoría sobra.** Si vas a llevarla
+con el móvil al lado, tu posición ya la pone el teléfono: el GPS de la placa no
+te aporta nada. Empieza por ahí y ahórrate la diferencia.
+
+**La T-Beam se gana el precio en dos casos concretos**, los dos con la placa
+sola: cuando quieres que **sepa dónde está sin móvil** —una celda que se dibuja
+en el mapa ella sola, o un rastreador— y cuando quieres **batería sin
+inventártela**, que es lo que necesita una placa en un collado o en una mochila.
+
+Y si la LoRa32 se te queda corta por ahí, no has perdido nada: una placa de más
+en la red es una celda de más, que es justo lo que hace que crezca la
+cobertura.
+
+**El móvil**: cualquiera con **Android 4.4 o posterior**. Se conecta a la placa
+por Bluetooth LE o por WiFi, y la app no necesita Play Services ni cuenta de
+nada. Aviso por experiencia: **el Bluetooth LE va fino de Android 5 en
+adelante**; en 4.4 da guerra, y ahí es mejor conectar por WiFi — la placa
+levanta su propia red si se le pide.
+
+**La antena importa más que la placa.** Las medidas de arriba son con una antena
+micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
+
+---
+
+## Cómo funciona
+
+```
+    ZONA A                                  ZONA B
+                  ┌──────────────┐
+                  │  reflector   │   opcional, y ya hay uno
+                  └──┬────────┬──┘   puesto: une por internet
+        internet ────┘        └──── internet   zonas que no
+             │                          │      se oyen
+        ┌────┴────┐                ┌────┴────┐
+        │  CELDA  │                │  CELDA  │  en alto, con
+        └────┬────┘                └────┬────┘  antena, y REPITE
+             │  radio LoRa               │
+        ┌────┴────┐                      │
+        │         │                      │
+     ┌──┴───┐  ┌──┴───┐              ┌───┴──┐   no repiten: donde
+     │ nodo │  │ nodo │              │ nodo │   hay celda no hace
+     └──┬───┘  └──┬───┘              └───┬──┘   falta
+    BLE │    WiFi │                      │
+       📱        📱                     📱      hablas desde aquí
+```
+
+**Tres papeles, un solo firmware, y la placa elige sola:**
+
+- **Celda** — la pones en alto, con corriente y buena antena. Repite todo lo que
+  oye, y es la que convierte tres placas sueltas en una red que cubre un valle.
+  Si tiene internet, además une tu zona con otras por un reflector.
+- **Nodo** — la que llevas encima. Habla con tu móvil por Bluetooth o WiFi y se
+  calla cuando hay una celda a la vista, para no estorbar.
+- **Suelto** — sin ninguna celda cerca, dos placas en el campo **ya hacen red**
+  ellas solas y se repiten la una a la otra. No hay nada que configurar.
+
+```
+  Sin infraestructura, sin cobertura y sin internet:
+
+      📱── nodo ────RF────► nodo ──📱    aquí sí se repiten
+```
+
+---
+
+## Para qué sirve
+
+Hablar por voz donde no hay nada. Es un walkie de grupo que **no depende de
+ninguna red** — y la cobertura no es la que te toque: es la que tú decidas
+poner.
+
+### La cobertura se compra por celdas, no por vatios
+
+Aquí está la idea que lo cambia todo. Una celda **no es un repetidor caro**: es
+la misma placa de 30 €, en alto, con corriente y una antena decente. Y la
+cobertura de la red **es la suma de sus celdas**, así que crece añadiendo
+placas, no subiendo potencia.
+
+```
+  una celda        dos celdas           cinco celdas
+     ●                ●━━━━●         ●━━━●━━━●━━━●━━━●
+  un valle      el valle de al lado    una comarca
+```
+
+Y no hay que elegir cómo se encadenan: **por radio** (una celda oye a la otra y
+repite) o **por internet** (cada celda con red se engancha al mismo reflector y
+dos zonas que no se oyen quedan unidas). Lo normal es mezclarlo.
+
+Lo que eso ahorra frente a montar un repetidor de verdad: **sin duplexor, sin
+cavidades, sin PA, sin torre, sin alquiler de emplazamiento y sin coordinación
+de frecuencia**. Una celda entera cabe en una caja estanca con un panel solar.
+
+Y escala de verdad, medido: **veinte nodos balizando cada minuto ocupan el
+1,37 % del canal**. La red no se ahoga al crecer, porque los nodos que ven una
+celda **se callan** en vez de repetir — es justo lo contrario de una malla, donde
+cada nodo nuevo empeora la red.
+
+**Por eso la comparación con un repetidor de FM no va por vatios.** Ese
+repetidor, con toda su potencia, **no entra en el valle que tiene detrás**: la
+sombra no se rompe con más vatios. Aquí la rompes poniendo otra placa de 30 € en
+el sitio donde cae. Medido: a 3,2 km sin visión directa se oía **mejor** que a
+1,75 km con visión. **No se planifica por radios, se planifica por sombras.**
+
+### Casos concretos
+
+- **Montaña, valles, pistas forestales.** Un grupo con móviles y una placa cada
+  uno se oye a kilómetros sin repetidor de nadie.
+- **Un pueblo o un valle entero** con una sola celda en un tejado.
+- **Un club o una comarca**: cada socio pone una celda donde puede y la red
+  crece sola, sin permisos ni infraestructura compartida que gestionar.
+- **Emergencias y simulacros**: funciona con la infraestructura caída, y una
+  placa con batería en un collado abre el paso a otro valle en cinco minutos.
+- **Salir en el mapa**: la posición de cada uno viaja por la misma radio, y
+  desde una celda con internet se publica en APRS-IS y se ve en aprs.fi.
+- **Experimentar**: el protocolo cabe en una página y las herramientas son
+  Python suelto. Se escucha la red entera con un script de treinta líneas.
+
+Lo que **no** es: no da calidad de teléfono —es Codec2 a 1200 bps, se entiende
+bien y suena a radio— y no es privado, porque va sin cifrar y a propósito.
+
 ## Uso legal
 
-**Esto es para radioaficionados con licencia.** El perfil que viene de fábrica —
-439,600 MHz, 17 dBm, voz sin cifrar — es legal en el servicio de aficionados y
-en ningún otro. Tres cosas que conviene tener claras antes de encender:
+**Esto es para radioaficionados con licencia.** El perfil de fábrica —439,600
+MHz, 250 kHz de ancho, 17 dBm, voz sin cifrar— está pensado para el servicio de
+aficionados y para ningún otro.
 
-- **La banda.** 430-440 MHz está atribuida al servicio de aficionados en las tres
-  regiones de la UIT, pero el reparto interno, la potencia y los usos permitidos
-  los fija **el plan nacional de cada país**, y no coinciden. Contrasta el canal
-  con tu administración y con el bandplan de la IARU de tu región antes de
-  transmitir. Nadie ha hecho ese trabajo por ti.
-- **La identificación.** El nodo baliza tu indicativo cada minuto y lo mete en la
-  cabecera de cada transmisión. Eso es identificación, y por eso el indicativo no
-  es opcional: un nodo sin configurar no debe salir al aire.
-- **El cifrado.** No hay, y es a propósito. Ocultar el contenido de las
-  comunicaciones está prohibido en el servicio de aficionados (RR 25.2A). Quien
-  quiera privacidad, este no es el proyecto.
+- **Comprueba tu plan nacional antes de encender.** 430-440 MHz está atribuida
+  al servicio de aficionados en las tres regiones de la UIT, pero **el reparto
+  interno lo fija cada país** y no coincide. 439,600 con 250 kHz de ancho ocupa
+  `439,475-439,725`: mira qué hay ahí en tu plan y en el de tus vecinos, porque
+  un canal así se oye lejos. Nadie ha hecho ese trabajo por ti.
+- **Tu indicativo no es opcional.** El nodo lo baliza y lo mete en la cabecera de
+  cada transmisión: eso es la identificación de tu estación. Un nodo sin
+  configurar sale como `NOCALL` y no debe transmitir así.
+- **No hay cifrado, y es a propósito.** Ocultar el contenido está prohibido en el
+  servicio de aficionados (RR 25.2A). Quien busque privacidad, éste no es el
+  proyecto.
 
-**Fuera de la banda de aficionados esto no sirve tal cual.** En Europa, el único
-hueco SRD que admite voz es 869,7-870 MHz (anexo 1, h9 de la ERC/REC 70-03):
-5 mW p.r.a., ancho **≤25 kHz**, LBT y **≤1 minuto por transmisión**. El perfil
-de fábrica —250 kHz y 50 mW— incumple las tres, así que no es cuestión de
-cambiar la frecuencia y ya. En el resto de 863-870 MHz lo que lo impide no es
-que sea voz, es el ciclo de trabajo: con el 1% habitual se transmite 36 segundos
-por hora.
+El firmware **se niega a salir de 430-440 MHz** (`BANDA_MIN`/`BANDA_MAX` en
+`platformio.ini`): rechaza cualquier orden de radio fuera de banda y, si
+encuentra guardada una frecuencia que no vale, vuelve al canal de fábrica al
+arrancar. No pretende detener a nadie —es código abierto y cambiar dos líneas
+son dos minutos— sino evitar lo único que iba a pasar de verdad: un dedo torpe
+escribiendo 443 en vez de 439 y transmitiendo fuera de banda sin enterarse.
+Quien tenga otra atribución cambia esas dos líneas, recompila, y con ello asume
+lo que emite.
 
-### Qué hace el software al respecto
+## Compilar a mano
 
-El SX1278 de estas placas llega de 420 a 520 MHz, mucho más de lo que cubre
-ninguna licencia de aficionado. Así que **el firmware se niega a salir de
-430-440 MHz** (`BANDA_MIN`/`BANDA_MAX` en `platformio.ini`): rechaza el
-`CMD_RADIO` que se vaya de banda, y si encuentra en NVS una frecuencia que no
-vale —guardada por otra versión— vuelve al canal de fábrica al arrancar. La app
-avisa antes de mandarlo, pero quien decide es el nodo: cualquiera puede mandar un
-`CMD_RADIO` con `nodo.py` o con un script.
+Para tocar el código, o si no puedes usar el instalador del navegador.
 
-Esto no detiene a nadie decidido: el firmware es abierto, y cambiar esas dos
-líneas y recompilar son dos minutos. No pretende otra cosa. Lo que evita es lo
-único que iba a pasar de verdad — un dedo torpe escribiendo 443 en vez de 434 y
-transmitiendo fuera de banda sin enterarse.
+### El firmware
 
-Quien tenga otra atribución, otro servicio u otro país, cambia esas dos líneas y
-compila lo suyo, y con ello asume lo que emite. La potencia, en cambio, se avisa
-pero no se limita: dentro de la banda es decisión del operador.
+Con **PlatformIO** (compila y flashea de una vez):
+
+```bash
+cd firmware
+pio run -e lora32 -t upload        # o -e tbeam
+```
+
+O con **esptool**, usando los binarios ya compilados —los de `docs/firmware/`, o
+los del [último *release*](https://github.com/pyopower/pttLoRa/releases/latest):
+
+```bash
+esptool --port /dev/ttyACM0 --baud 460800 write-flash -z \
+  0x1000  docs/firmware/lora32/bootloader.bin \
+  0x8000  docs/firmware/lora32/partitions.bin \
+  0xe000  docs/firmware/lora32/boot_app0.bin \
+  0x10000 docs/firmware/lora32/firmware.bin
+```
+
+⚠️ **`boot_app0.bin` en 0xe000 no es opcional.** Si te lo saltas, después de una
+actualización por radio la placa arranca desde la otra ranura y parece que el
+firmware nuevo no ha entrado.
+
+### La app
+
+**Antes de nada: no hace falta compilarla.** El APK está listo:
+
+| descarga | para |
+|---|---|
+| **[pttlora.apk](https://pyopower.github.io/pttLoRa/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
+| [pttlora-v7a.apk](https://pyopower.github.io/pttLoRa/pttlora-v7a.apk) | sólo 32 bits, para móviles viejos |
+
+Si aun así quieres compilarla, el códec no va en el repositorio y hay un paso
+más:
+
+```bash
+cd app
+./preparar.sh                   # clona y parchea Codec2
+./gradlew assembleRelease   # el APK, en app/build/outputs/
+```
+
+### Si una placa no responde
+
+`escaner/` averigua cómo está cableada una placa desconocida y si su chip de
+radio está vivo: prueba los patillajes conocidos leyendo el registro de
+identidad del SX127x (`0x42` devuelve `0x12` y sólo eso), barre el CS y el MISO,
+y si nadie contesta mide los pines como lo que son —entradas con pull-up y con
+pull-down— para distinguir un bus al aire de un chip sin alimentación.
+
+```bash
+cd escaner && pio run -t upload --upload-port /dev/ttyACM0
+```
+
+**Compara siempre con una placa que funcione.** En una sana el bus queda suelto
+y el MISO en alto; con el chip de radio sin alimentación, *todas* las líneas
+caen a masa por sus diodos de protección. Eso distingue una avería de un
+patillaje equivocado, y no se puede deducir desde el software.
+
+### En el banco de pruebas
+
+Un consejo para la primera prueba: **baja la potencia a 2 dBm** si tienes dos
+placas en la misma mesa. A 17 dBm y veinte centímetros se satura el receptor de
+la de al lado y ves tramas corruptas sin motivo aparente.
+
+```bash
+tools/nodo.py radio 439.600 --potencia 2
+```
+
+### El papel de cada placa
+
+**Un solo firmware hace los tres papeles**, y se eligen desde la app sin
+reflashear: obligar a elegir binario es pedirle al usuario un conocimiento que
+no tiene por qué tener.
+
+| Perfil | Qué hace |
+|---|---|
+| **Automático** (por defecto) | Puente para tu móvil, y repetidor sólo cuando hace falta: se calla si ve una celda o si no hay a quién repetir |
+| **Repetidor fijo** (celda) | Repite siempre. Es el de la placa que se pone en alto: puede haber estaciones que le oigan a él y no entre ellas |
+| **Sólo mi radio** | No repite nunca. Para quien no quiera gastar batería ni aire en los demás |
+
+## El servidor: ya hay uno puesto
+
+**Para hablar por radio no hace falta ningún servidor.** Dos placas y dos
+móviles ya son una red, y una celda en un tejado cubre un valle sin que nada de
+esto exista. El servidor entra sólo para tres cosas: **unir zonas que no se oyen
+por radio**, **hablar desde el móvil sin placa** y **salir en el mapa de APRS**.
+
+**Y para esas tres ya hay uno funcionando: `or.adan.ovh`.** La app y las
+herramientas vienen apuntando ahí de fábrica, así que **no tienes que instalar
+ni configurar nada** — enciendes y funciona.
+
+Montar el tuyo sólo hace falta si quieres **tu propia red**, separada de la
+pública, o si prefieres no depender de una máquina ajena. Y se puede hacer pieza
+a pieza: cada una es independiente, así que puedes tener tu reflector y seguir
+usando el resto del servidor público, o al revés.
+
+| pieza | puerto | qué hace | ¿montar el mío? |
+|---|---|---|---|
+| **reflector** | 4461 | Punto de reunión de las celdas: une por internet zonas que no se oyen por radio, y arbitra quién habla. | Sólo si quieres una red aparte. Usando el público, tu grupo comparte canal con quien esté. |
+| **nodo de datos** | 4460 | Un nodo sin radio al que se conecta la app: permite hablar **desde el móvil sin placa**, y sirve de red de seguridad cuando la radio no llega. | Sólo si has montado tu propio reflector: va colgado de él. |
+| **igate APRS** | — | Publica en APRS-IS las posiciones que ve en el reflector, y salen en aprs.fi. | **Éste sí conviene propio**: entra en APRS-IS con **tu** indicativo, y decides tú qué estaciones se publican. |
+| **relevo de mando** | 4464 | Administrar y actualizar un nodo instalado en una red ajena, donde no puedes abrir puertos: es el nodo quien llama. | Sólo si tienes una celda en un sitio prestado. |
+| **censo de la red** | — | Anota qué células hay, desde cuándo, dónde y **quién oye a quién y con cuánta señal**. Observador puro: si se cae, la radio ni se entera. | Opcional. Es lo que convierte una lista de nodos en un mapa de sombras. |
+
+Ninguna necesita base de datos ni dependencias: son procesos Python sueltos que
+arrancan con un `systemd` de diez líneas.
+
+```bash
+# reflector
+tools/nodovirtual.py --escucha 4461
+# nodo de datos (cuelga del reflector)
+tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461
+# igate a APRS-IS
+tools/igate.py --conf igate.conf
+# relevo de mando
+tools/mandovirtual.py --nodos 4464 --operador 4471
+# censo de la red (cuelga del reflector)
+tools/registro.py --reflector 127.0.0.1:4461 --fichero registro.json
+```
+
+Para apuntar a tu servidor: en la app, **Ajustes → Enlace con otros nodos** (y
+**Camino de datos** para el 4460); desde la consola, `tools/nodo.py enlace
+mi-servidor.example 4461`.
+
+⚠️ **El enlace va en la CELDA, no en un nodo cliente** — si no, lo que entra por
+internet nunca sale por la antena. Está explicado y medido más abajo.
+
+## Herramientas
+
+```bash
+tools/nodo.py estado
+tools/nodo.py config EA1ABC --canal 1 --saltos 3 --potencia 2
+tools/nodo.py escuchar 30
+tools/nodo.py hablar grabacion.wav --modo 1200
+
+# actualizar el firmware por el enlace, sin clave de WiFi
+tools/ota_bt.py fw.bin --tcp 192.168.1.50
+
+# banco de pruebas
+tools/prueba2nodos.py --segundos 4          # dos nodos por cable
+tools/pruebawifi.py 192.168.4.1      # varios usuarios a la vez
+tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1
+tools/vigila.py /dev/ttyACM1         # el código, por cable
+bench/bench.py voz.wav               # modos de Codec2
+```
+
+⚠️ **`ota_bt.py` no necesita la clave del WiFi.** Va por el propio enlace KISS
+del puerto 4460, así que sirve igual por cable, por BLE, por WiFi o por un canal
+de mando saliente. La OTA de Arduino del 3232 sí la pide, y ésa es la diferencia
+que hace que se pueda actualizar un nodo instalado en una red ajena.
+
+---
+
+## Cómo está hecho por dentro
+
+A partir de aquí es detalle técnico: sirve para modificarlo o para escribir
+otro cliente, y no hace falta para usarlo.
 
 ## Perfil de canal
 
@@ -78,35 +405,9 @@ pero no se limita: dentro de la banda es decisión del operador.
 saltos (218 % del canal). Para voz hay que quedarse en SF7 y comprar alcance con
 potencia y antena.
 
-**439.600, y el porqué importa.** Se empezó en 434.400 y **estaba mal**: ese
-canal cae en el tramo `434,000-434,594` del plan de bandas UHF de la IARU R1,
-que tiene un máximo de **12 kHz de ancho de banda**. Un canal LoRa a BW 250 es
-veinte veces eso, sentado encima de una veintena de canales de 12,5 kHz de otra
-gente. Que el plan sea una recomendación y no una ley no lo arregla.
-
-439.600 sale de mirar dónde deja sitio el propio plan. El bloque `438-440` está
-marcado con ancho de banda **`none`** —sin límite— y dentro de él queda un hueco
-sin nada asignado:
-
-```
-438,000 - 440,000   ancho: none   All mode
-    438,025 - 438,175   Digital communication channels
-    438,200 - 438,525   Digital communication repeater channels
-    438,550 - 438,625   Multi mode
-    438,650 - 439,425   Repeater output channels (7.6 MHz shift)
-    ······· 439,425 - 439,800 · sin asignar ·······   <- el canal va aquí
-    439,800 - 439,975   Digital communication link channels
-```
-
-A BW 250 ocupa **439,475-439,725**, con margen por los dos lados. Y de regalo
-queda **fuera de la banda ISM** (433,05-434,79), donde se compartía sitio con
-mandos de garaje, estaciones meteorológicas y el propio LoRa APRS.
-
-⚠️ **Contrasta esto con TU plan nacional antes de encender.** Los planes
-nacionales subdividen ese bloque de formas distintas: el del RSGB británico, por
-ejemplo, usa `439,400-439,775` para salidas de repetidor de voz digital y
-reserva `439,900-439,9875` para *Low Power LoRa Gateways*. Un canal de 250 kHz
-se oye lejos, así que mira también el plan de tus vecinos.
+El canal ocupa **439,475-439,725 MHz**, y está fuera de la banda ISM, así que
+no se comparte sitio con mandos de garaje ni estaciones meteorológicas. Se
+cambia en `platformio.ini` o en caliente desde la app.
 
 ## Elección de códec
 
@@ -149,47 +450,6 @@ de PTT abre con INICIO y hay baliza cada 10 minutos.
 
 Dedupe de la malla: `(src, stream, seq, tipo)`, 64 entradas, 30 s.
 
-## Hardware
-
-LilyGO con ESP32 y SX127x. Probado en:
-
-- **LoRa32 v2.1** (T3 v1.6.1) — entorno `lora32`
-- **T-Beam v1.2** (AXP2101) — entorno `tbeam`
-
-En la T-Beam hay que **encender ALDO2 (radio) y ALDO3 (GPS) del AXP2101** o el
-SX1278 no tiene corriente y `radio.begin()` falla.
-
-## Compilar y flashear
-
-```bash
-pio run                          # los cuatro entornos
-esptool --port /dev/ttyACM0 --baud 460800 write-flash -z \
-        0x10000 .pio/build/lora32/firmware.bin
-```
-
-Si cambia la tabla de particiones, flashear también `bootloader.bin` en 0x1000 y
-`partitions.bin` en 0x8000.
-
-Entornos:
-
-| Entorno | Flash | Para qué |
-|---|---|---|
-| `lora32` | 37 % de 3 MB | LilyGO LoRa32 v2.1 |
-| `tbeam` | 38 % | LilyGO T-Beam v1.2 |
-
-**Un solo firmware hace todos los papeles.** Obligar a elegir binario, o a
-reflashear para cambiar de función, es pedirle al usuario un conocimiento que no
-tiene por qué tener. El papel se elige desde la app y se guarda en el nodo:
-
-| Perfil | Qué hace |
-|---|---|
-| **Automático** (por defecto) | Puente + repetidor, callándose la repetición si no hay a quién repetir |
-| **Repetidor fijo** | Repite siempre. Para un nodo en alto sin móvil: puede haber estaciones que le oigan y él no. Apaga el Bluetooth a los 5 min si nadie se conecta, con ventana de gracia en cada arranque |
-| **Solo mi radio** | No repite nunca |
-
-Se usa `huge_app.csv` porque Bluetooth Classic cuesta 828 KB y con el esquema por
-defecto el firmware quedaba al 89 %.
-
 ## Protocolo con el anfitrión (móvil o gateway)
 
 Tramas **KISS** por USB serie y por **Bluetooth SPP** a la vez. Se eligió SPP y no
@@ -214,7 +474,7 @@ infraestructura de ninguna clase. Hasta **8 sesiones** a la vez, que es lo que
 admite el AP del ESP32.
 
 ```bash
-tools/nodo.py red ap PTTLoRa-EA1ABC <clave>     # y reiniciar el nodo
+tools/nodo.py red ap PTTLoRa-EA1ABC <clave>   # y reiniciar
 tools/nodo.py --tcp 192.168.4.1 --ident EA1XYZ hablar voz.wav
 ```
 
@@ -247,7 +507,7 @@ Dos nodos que no se oyen por radio pueden enlazarse por red, y entonces cada uno
 retransmite por su antena lo que oye el otro.
 
 ```bash
-tools/nodo.py enlace 203.0.113.7 4461      # y el otro nodo escucha en 4461
+tools/nodo.py enlace 203.0.113.7 4461   # el otro escucha ahí
 ```
 
 Por el enlace **no viajan órdenes, viajan tramas del aire tal cual**. El nodo del
@@ -286,7 +546,7 @@ de reunión en un servidor se cae todo eso: **todos los nodos salen, ninguno
 entra**.
 
 ```bash
-tools/nodovirtual.py --escucha 4461      # en un servidor alcanzable
+tools/nodovirtual.py --escucha 4461   # en un servidor
 tools/nodo.py enlace mi-servidor.example 4461     # en cada nodo
 ```
 
@@ -316,7 +576,7 @@ Opcional, y **solo si le pones WiFi al nodo** — que también es opcional. Sirv
 para actualizar un nodo instalado en un sitio al que no puedes subir.
 
 ```bash
-espota.py -i <ip del nodo> -p 3232 -a <clave del wifi> -f firmware.bin
+espota.py -i <ip> -p 3232 -a <clave wifi> -f firmware.bin
 ```
 
 La IP sale en el estado del nodo (`wifi=…`). La clave de actualización **es la
@@ -327,183 +587,13 @@ Dos avisos: el ESP32 solo ve redes de **2,4 GHz**, y una actualización dura má
 que el watchdog, así que el firmware se sale de él mientras dura — si no, la
 placa se reiniciaría a medio flashear.
 
-## Herramientas
+## Trampas y cicatrices
 
-```bash
-tools/nodo.py estado
-tools/nodo.py config EA1ABC --canal 1 --saltos 3 --potencia 2
-tools/nodo.py escuchar 30
-tools/nodo.py hablar grabacion.wav --modo 1200
-tools/prueba2nodos.py --segundos 4        # dos nodos, los dos puertos abiertos
-tools/pruebawifi.py 192.168.4.1 --radio /dev/ttyACM1   # varios usuarios a la vez
-tools/pruebaenlace.py --a 192.168.4.1 --b /dev/ttyACM1 # enlace entre dos nodos
-tools/nodovirtual.py --escucha 4461       # punto de reunión en un servidor
-tools/vigila.py /dev/ttyACM1              # lee por el cable el código de acceso
-bench/bench.py voz.wav                    # comparar modos de Codec2 con pérdidas
-```
-
-## Trampas que costaron tiempo
-
-1. **`setOutputPower()` deja el SX1278 en STANDBY y no vuelve solo a recepción.**
-   Cualquier nodo se quedaba sordo justo al configurarlo. Tras **cualquier**
-   cambio de parámetros de radio hay que re-armar la recepción.
-2. **No tocar GPIO16 en la LoRa32 v2.1.** El variant lo declara `OLED_RST` pero
-   manejarlo cuelga el sistema: arranque en bucle con `TG1WDT_SYS_RESET`. No hace
-   falta: `oled.begin()` reinicializa el chip por I²C.
-3. **No rebautizar el Bluetooth en caliente.** `SerialBT.end()` + `begin()` es
-   frágil en el ESP32 y deja la placa sin anunciarse. El nombre se fija al
-   arrancar; el indicativo se guarda en NVS.
-4. **Abrir el puerto serie no siempre reinicia estas placas** (CH9102). Hay que
-   forzar DTR/RTS o los contadores engañan.
-5. **Un solo hablante por canal.** Se escucha antes de transmitir (CAD, que
-   detecta portadora LoRa bajo el ruido, donde el RSSI no serviría).
-6. **La espera antes de repetir es aleatoria** (50–200 ms): si todos los
-   repetidores a la vista repiten a la vez, colisionan y no llega ninguno.
-7. **Mientras un nodo repite, está sordo.** Con lotes de voz cada 480 ms eso se
-   come el siguiente: medido, con dos nodos y `saltos=3` se perdía el 31 % de los
-   lotes. Por eso cada nodo lleva una tabla de vecinos y **solo repite si hay
-   alguien a quien repetir**; con dos nodos se apaga solo y la entrega sube al
-   100 %. Un nodo repetidor fijo sin móvil se compila con `-DREPETIR_SIEMPRE`,
-   porque puede haber estaciones que le oigan y él no.
-
-### `WiFiClient` no tiene `availableForWrite()`
-
-Hereda la de `Print`, que devuelve **0 siempre**. La salida se escribía byte a
-byte comprobando si había sitio, así que a los clientes por WiFi **no les llegaba
-ni un byte** — y sin ningún error: transmitían perfectamente y no recibían nada.
-Ahora la trama se arma entera y se manda de una, que además es lo correcto por
-TCP.
-
-Y el otro lado del mismo problema: `WiFiClient::write()` reintenta diez veces con
-un `select` de un segundo, o sea **hasta diez segundos bloqueado** si un cliente
-deja de leer. Eso se lleva por delante el watchdog, la radio y a todos los demás
-usuarios. Se pregunta antes, con un `select` de plazo cero, y si no cabe se tira
-la trama: la voz es tiempo real.
-
-### 🔑 El socket de Android tiene que ser **inseguro**
-
-Es la causa del fallo que tuvo bloqueada la app por Bluetooth: el `connect()`
-funcionaba, el nodo veía la sesión abierta… y la app moría en el primer `read`
-con `read failed, socket might closed or timeout, read ret: -1`, mientras el
-nodo soltaba la ranura por `cliente Bluetooth mudo`.
-
-`createRfcommSocketToServiceRecord()` —y también el método oculto
-`createRfcommSocket(canal)`— abren un socket **seguro**: Android exige
-autenticación **y cifrado** del enlace. El nodo levanta el servidor SPP con
-`ESP_SPP_SEC_NONE`, que es lo que hace `BluetoothSerial::begin()` del core de
-Arduino, o sea que no ofrece ninguna de las dos cosas, y el enlace se cae en
-cuanto Android pide cifrar. Hay que usar
-**`createInsecureRfcommSocketToServiceRecord()`**.
-
-Por eso `tools/nodo.py` desde Linux no falla nunca: un socket RFCOMM de Python
-no pide ni autenticación ni cifrado. Se puede reproducir el fallo entero sin
-móvil, y es la forma de comprobar cualquier cambio de seguridad del nodo **antes**
-de tocar la app:
-
-```bash
-sudo rfcomm connect       hci0 <MAC> 1   # -> Connected /dev/rfcomm0   (como la app arreglada)
-sudo rfcomm -A -E connect hci0 <MAC> 1   # -> Connection reset by peer (como Android con socket seguro)
-```
-
-### Lo que hacen los firmwares que llevan años en el aire
-
-Antes de seguir afinando a ciegas, se miró el código de los que ya funcionan:
-
-| Proyecto | Qué es | Qué hace con el Bluetooth |
-|---|---|---|
-| [`sh123/esp32_loraprs`](https://github.com/sh123/esp32_loraprs) | módem KISS por LoRa para APRSdroid | `SerialBT.begin(nombre)` **y nada más**: sin PIN, sin SSP, sin plazos |
-| [`richonguzman/LoRa_APRS_Tracker`](https://github.com/richonguzman/LoRa_APRS_Tracker) | tracker LoRa APRS | igual, y además `SerialBT.onData()` en vez de sondear |
-| [`ge0rg/aprsdroid`](https://github.com/ge0rg/aprsdroid) | la app Android del otro lado | un hilo dueño del socket que **se reconecta solo** cada 3 s |
-
-Tres conclusiones, y las tres se aplicaron:
-
-1. **Nadie vigila al cliente.** La sesión SPP existe o no existe. Nuestro plazo
-   de 12 segundos era invención propia y era justo lo que tiraba la app. Se
-   conserva uno de **cinco minutos** —y solo para recuperar la única ranura si
-   se queda colgada, que sin eso obligaría a reiniciar el nodo—, pero tan largo
-   que no puede competir con el tráfico normal.
-2. **Recibir por `onData()`, no sondeando.** La cola interna de
-   `BluetoothSerial` son **512 bytes fijos** (`RX_QUEUE_SIZE` en el core, no hay
-   forma de agrandarla) y nuestro bucle puede tardar casi un segundo en dar la
-   vuelta mientras transmite: con lotes de voz cada 480 ms esa cola se llena y
-   **se pierde audio sin que nada avise**. CA2RXU lo resuelve con el callback y
-   lo dice en el propio comentario del código. Aquí el callback solo copia a un
-   anillo de 4 kB —corre en la tarea de Bluetooth, donde no se puede transmitir
-   ni tocar la NVS— y el bucle lo mastica cuando le toca. `btatasco` en el
-   estado cuenta lo que no cupo: un desbordamiento silencioso se manifestaría
-   como "se oye entrecortado" y no habría por dónde cogerlo.
-3. **La reconexión va en la app, no en el nodo.** APRSdroid lleva años con el
-   mismo patrón: un hilo que posee el socket y, ante cualquier excepción,
-   espera y vuelve a abrirlo.
-
-Y una confirmación que vale su peso: en el fuente del core,
-`BluetoothSerial::begin()` arranca el servidor con
-**`esp_spp_start_srv(ESP_SPP_SEC_NONE, ...)`**. Por eso el socket de Android
-tiene que ser el inseguro —lo de arriba— y por eso `enableSSP()` (que pone la
-máscara a `ENCRYPT|AUTHENTICATE`) es el camino si algún día se quiere seguridad
-de verdad: no un PIN suelto.
-
-### El latido tiene que caber en el plazo, con margen
-
-El nodo suelta la ranura Bluetooth de un cliente callado. Estaba en **12 s** —para
-tirar las sesiones fantasma que abre el emparejamiento de Android— y la app latía
-cada **30 s**: mandaba su identificación al conectar, se callaba, y a los doce
-segundos el nodo la echaba. **Siempre.** Parecía un fallo del Bluetooth de Android
-y era un plazo contra otro.
-
-Lo que faltaba era distinguir dos casos que no se parecen en nada:
-
-| Cliente | Plazo |
-|---|---|
-| No ha dicho **nunca** nada → sesión fantasma | 12 s |
-| Ya habló → es la app de verdad | 90 s |
-
-Y en la app, latido cada 10 s. Entre un plazo y lo que lo alimenta conviene casi un
-orden de magnitud; con 30 contra 12 no hay conexión que sobreviva.
-
-Se comprueba sin móvil, y hay que comprobar **las dos mitades**: un cliente que
-habla y luego calla 40 s debe seguir enlazado, y uno que no dice nada debe caer a
-los 12 s.
-
-### Reconectar es parte del enlace, no un extra
-
-El Bluetooth es, con el WiFi, la única forma de hablar con el nodo. Un corte —salir
-de cobertura, reiniciar el nodo, una actualización por OTA— dejaba la app muerta
-hasta que el usuario entrara en los ajustes a elegir el nodo otra vez. Ahora el
-servicio reintenta solo, con espera creciente de 3 a 20 s, y el estado «Sin enlace»
-se puede tocar para reintentar en el acto.
-
-Y el nodo elegido **se recuerda**: un nodo encontrado por búsqueda no queda
-emparejado (el SPP no lo necesita), así que no salía en la lista de ajustes —que
-solo enseñaba los emparejados— y parecía que la app no guardaba nada. Ahora sale el
-primero.
-
-### Emparejar en Android no es el código del nodo
-
-Confunde, y mucho. El emparejamiento de los ajustes de Android es una operación
-de la pila Bluetooth: **el nodo ni se entera, y no pide nada**. El código de seis
-cifras lo pide el nodo al abrirse la sesión, o sea cuando conecta la app. Así que
-emparejar por fuera y no ver ningún código es lo normal, no un fallo.
-
-De hecho no hace falta emparejar en absoluto: el SPP acepta clientes sin
-emparejar, y por eso la app trae su propia búsqueda.
-
-### El aviso del código se podía perder
-
-`onPideCodigo` se atendía solo en vivo, pero el servicio conecta por su cuenta y
-el aviso llega cuando llega: si caía antes de que la pantalla estuviera
-escuchando, se perdía y el usuario se quedaba con un enlace abierto que no
-responde a nada, sin saber por qué. El servicio guarda que está pendiente y la
-pantalla lo consulta al volver.
-
-### El estado llegaba partido por el cable
-
-Escribir en el serie no puede bloquear (un buffer lleno que nadie lee congelaría
-el nodo), pero tirar el byte a la primera tampoco: el buffer de salida son 256 B
-y la línea de estado ya pasa de eso, así que llegaba **con letras sueltas donde
-debería haber campos**, con toda la pinta de ser un fallo del `snprintf` — que no
-lo era. Ahora el buffer es de 1 kB y se espera hasta 15 ms a que el UART drene
-antes de rendirse.
+Todo lo que costó tiempo —y por qué— está en **[TRAMPAS.md](TRAMPAS.md)**: el
+jitter que ponía a los nodos a balizar en bucle, el `src` que no podía salir del
+indicativo, por qué una OTA parece no entrar, la baliza que mentía sobre su
+propio papel... Diecisiete cicatrices con su explicación. No hace falta para
+usar esto; hace falta si vas a tocarlo.
 
 ## Trabajo relacionado
 
@@ -516,3 +606,32 @@ antes de rendirse.
 - **Meshtastic** tiene módulo de audio con Codec2 pero **solo en 2,4 GHz**: dicen
   que sub-GHz no da para audio continuo *en su malla completa*. Aquí el canal es
   dedicado, que es otra cosa.
+
+---
+
+## Licencia
+
+**Apache 2.0** (ver `LICENSE` y `NOTICE`).
+
+El códec es **[Codec2](https://github.com/drowe67/codec2)** de David Rowe,
+**LGPL 2.1**. No va en este repositorio: `app/preparar.sh` lo clona de su
+repositorio oficial y lo parchea para cruzarlo con el NDK.
+
+⚠️ **La app lo enlaza estáticamente**, así que el APK que se distribuya queda
+sujeto a la LGPL 2.1. Se cumple publicando el código fuente completo de la app
+—que es lo que hace este repositorio— y conservando el `NOTICE`. El firmware del
+nodo **no** contiene Codec2, y eso no es casualidad: el códec vive en los
+extremos y la placa sólo mueve bytes. Las herramientas de `tools/` y `bench/`
+llaman a `c2enc`/`c2dec` como programas externos, que no es enlazado.
+
+## Avisos
+
+- Esto **no es un producto**. Es un proyecto de radioaficionado y se publica por
+  si le sirve a alguien, sin ninguna garantía.
+- **El plan de banda es tuyo, no mío.** Lee la sección de uso legal antes de
+  encender nada: 430-440 MHz está atribuida al servicio de aficionados en las
+  tres regiones de la UIT, pero el reparto interno, la potencia y los usos los
+  fija el plan nacional de cada país y no coinciden.
+- El canal va **sin cifrar y a propósito**, porque en el servicio de aficionados
+  no procede. Cualquiera con un receptor puede oírlo, y la posición que se
+  publique viaja igual de clara.

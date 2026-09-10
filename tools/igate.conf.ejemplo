@@ -1,5 +1,10 @@
 # igate.conf — pasarela PTT LoRa -> APRS-IS. Ver igate.py.
 
+# Ojo: esto es para montar TU PROPIO igate. Si sólo quieres usar la red, no
+# hace falta: ya hay un servidor público funcionando y la app apunta ahí de
+# fábrica. Un igate propio tiene sentido porque entra en APRS-IS con TU
+# indicativo y decides tú qué estaciones se publican.
+
 [reflector]
 host = 127.0.0.1
 puerto = 4461
@@ -7,7 +12,7 @@ puerto = 4461
 [aprs]
 # El indicativo con el que ENTRA el igate. No es el de los nodos: es el de la
 # pasarela, y conviene que sea un SSID que no uses para otra cosa.
-llamada = C31AG-14
+llamada = EA1ABC-14
 # `auto` lo calcula del indicativo. No es un secreto: sale del propio
 # indicativo y lo unico que afirma es "soy esta estacion".
 passcode = auto
@@ -28,14 +33,14 @@ puerto = 14580
 # si se pasa. Con `nombre` y `bateria` detras, la linea de arriba se queda en
 # unos 26. El dia que el proyecto tenga URL publica, cabe asi:
 #
-#   comentario = 434.400MHz Voice over LoRa pttlora.adan.ovh
+#   comentario = 439.600MHz Voice over LoRa pttlora.adan.ovh
 #   extras =
 #
 # ...o quitando solo la bateria (`extras = nombre`) si la URL es corta.
-comentario = 434.400MHz Voice over LoRa
+comentario = 439.600MHz Voice over LoRa
 
 # Que se le pega detras: `nombre` del cacharro y/o `bateria`. Vacio = nada.
-# La bateria se quito el 8-sep: con ella, `celdaTEJADO` se iba a 46 caracteres.
+# La bateria se quito el 8-sep: con ella, `celdaCERRO` se iba a 46 caracteres.
 # Y en una celda enchufada a la red el numero no dice nada — sale del divisor
 # de tension, que sin bateria mide lo que mide.
 # El PAPEL (celda o nodo) no se pone en letra: ya lo dice el simbolo del mapa,
@@ -72,6 +77,6 @@ enviar = no
 # publica como persona, desde donde quiera que hable.
 [nodos]
 # la celda, por nombre: es infraestructura y baliza su posicion ella sola
-celdaTEJADO = C31AG-11
+celdaCERRO = EA1ABC-11
 # la persona, por indicativo: su posicion sale en el INICIO de cada transmision
-C31AG       = C31AG-9
+EA1ABC      = EA1ABC-9
