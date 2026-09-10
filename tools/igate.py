@@ -199,6 +199,24 @@ class Igate:
         # PRESUPUESTO DE CARACTERES: el dia que en `comentario` entre una URL,
         # esto se vacia y ya esta.
         self.extras = cfg['aprs'].get('extras', 'nombre bateria').split()
+        # EL ESTADO: la linea que dice QUE ES ESTO Y DONDE MIRARLO.
+        #
+        # Va en una trama APRS de estado (`>`) y no pegada al comentario de
+        # posicion, y esa es la clave: el comentario solo garantiza 43
+        # caracteres y ahi ya va la frecuencia, que es el dato util para quien
+        # quiera escuchar. El estado tiene su propio hueco (62), asi que la URL
+        # no le quita el sitio a nada. Es lo mismo que hace WPSD con su
+        # "Powered by WPSD (https://wpsd.radio)".
+        #
+        # Sin esto, una celda aparece en aprs.fi entre miles de estaciones y
+        # nadie puede saber que hay detras ni como montarse una.
+        self.estado = cfg['aprs'].get(
+            'estado', 'PTT LoRa: voz Codec2 por radio '
+                      'github.com/pyopower/pttLoRa').strip()
+        # Cada cuanto se repite. No va con cada baliza: una linea que no cambia
+        # repetida cada minuto es ruido en APRS-IS y no aporta nada.
+        self.estado_cada = int(cfg['aprs'].get('estado_cada', '1800'))
+        self.ultimo_estado = {}          # indicativo APRS -> cuando se mando
         # `nombre = INDICATIVO [borroso N]`. Ver la nota de `grados_aprs`.
         self.nodos = {}
         for k, v in (cfg['nodos'].items() if 'nodos' in cfg else []):
@@ -336,6 +354,22 @@ class Igate:
                      grados_aprs(b['lat'], False, borroso),
                      grados_aprs(b['lon'], True, borroso), simbolo, com))
         self.manda_aprs(paquete)
+        self.manda_estado(destino, ahora)
+
+    def manda_estado(self, destino, ahora):
+        """La trama de estado, de tarde en tarde. Ver `self.estado`."""
+        if not self.estado:
+            return
+        if ahora - self.ultimo_estado.get(destino, 0) < self.estado_cada:
+            return
+        self.ultimo_estado[destino] = ahora
+        txt = self.estado.encode('ascii', 'ignore').decode('ascii')
+        if len(txt) > 62:
+            log('⚠ estado de %d caracteres: APRS garantiza 62 -> "%s"'
+                % (len(txt), txt))
+            txt = txt[:62]
+        self.manda_aprs('%s>%s,TCPIP*,qAO,%s:>%s'
+                        % (destino, TOCALL, self.llamada, txt))
 
     # ------------------------------------------------------- el reflector --
     def escucha(self, host, puerto):

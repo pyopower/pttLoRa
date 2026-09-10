@@ -34,6 +34,22 @@ puerto = 14580
 # unos 26. El dia que el proyecto tenga URL publica, cabe asi:
 #
 #   comentario = 439.600MHz Voice over LoRa pttlora.adan.ovh
+
+# LA LINEA DE ESTADO: que es esto y donde mirarlo.
+#
+# Va en una trama APRS de estado (`>`), aparte del comentario de posicion. El
+# comentario solo garantiza 43 caracteres y ahi ya va la frecuencia, que es lo
+# util para quien quiera escuchar; el estado tiene su propio hueco (62), asi
+# que la URL no le quita sitio a nada. Es lo mismo que hace WPSD con su
+# "Powered by WPSD (https://wpsd.radio)".
+#
+# Sin esto, una celda aparece en aprs.fi entre miles de estaciones y no hay
+# forma de saber que hay detras ni como montarse una. Dejalo vacio para no
+# mandarlo.
+estado = PTT LoRa: voz Codec2 por radio github.com/pyopower/pttLoRa
+# Cada cuanto se repite, en segundos. No con cada baliza: una linea que no
+# cambia repetida cada minuto es ruido en APRS-IS.
+estado_cada = 1800
 #   extras =
 #
 # ...o quitando solo la bateria (`extras = nombre`) si la URL es corta.
