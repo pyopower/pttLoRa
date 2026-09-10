@@ -6,8 +6,8 @@ placa solo mueve bytes. Esta baliza hace de "movil fijo": se cuelga del nodo
 por WiFi (o por USB) y le mete voz de verdad cada pocos segundos, para poder
 irse con el otro nodo lejos y escuchar hasta donde llega.
 
-    ./baliza-alcance.py --tcp 192.168.1.50 --ident EA1ABC-9
-    ./baliza-alcance.py --tcp 192.168.1.50 --segundos 10 --pausa 5
+    ./baliza-alcance.py --tcp 192.168.1.61 --ident C31AG-9
+    ./baliza-alcance.py --tcp 192.168.1.61 --segundos 10 --pausa 5
 
 Cada transmision lleva un NUMERO cantado: al volver, se sabe exactamente
 cuantas se perdieron y en que punto del paseo, que es justo lo que hay que
@@ -54,10 +54,7 @@ def main():
     a = sys.argv[1:]
     tcp = opt(a, "--tcp", str, "")
     puerto = opt(a, "--puerto", str, "")
-    # ⚠️ `NOCALL` a proposito. Esto EMITE, y un indicativo de verdad por defecto
-    # haria que quien lo ejecute salga al aire con el distintivo de otro. Pon el
-    # tuyo con `--ident`: es tu estacion y es tu responsabilidad.
-    ident = opt(a, "--ident", str, "NOCALL")
+    ident = opt(a, "--ident", str, "C31AG-9")
     segundos = opt(a, "--segundos", float, 10.0)
     pausa = opt(a, "--pausa", float, 5.0)
     modo = opt(a, "--modo", str, "1200")

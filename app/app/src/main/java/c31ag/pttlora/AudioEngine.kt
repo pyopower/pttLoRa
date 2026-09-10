@@ -25,19 +25,24 @@ class AudioEngine(private val ctx: android.content.Context,
 
     companion object {
         const val SR = 8000
-        // Colchon de reproduccion. En LoRa la latencia ya es de ~1 s por el
-        // agrupamiento en lotes de 480 ms, asi que aqui no hace falta apilar
-        // mucho: con dos tramas sobra para absorber el jitter del Bluetooth.
-        private const val JITTER_START = 2
         /** A partir de aqui el limitador empieza a doblar la curva. */
         private const val UMBRAL = 20000f
         /** Nivel de voz al que apunta el nivelador del microfono (RMS). */
         private const val OBJETIVO = 6500.0
         /** Pasos de ganancia que ofrece Ajustes. */
         val GANANCIAS = floatArrayOf(1.0f, 2.0f, 3.0f, 4.0f, 5.0f)
+        /** Ganancias del MICRÓFONO. Empiezan por debajo de 1 a propósito: el
+         *  problema habitual no es que no se oiga, es que el micro del móvil
+         *  entrega demasiado y satura si no te separas un palmo. */
+        val MIC_GANANCIAS = floatArrayOf(0.3f, 0.5f, 0.7f, 1.0f, 1.5f, 2.0f, 3.0f)
+        val MIC_NOMBRES = arrayOf("0,3 · muy baja", "0,5 · baja", "0,7",
+                                  "1,0 · normal (por defecto)", "1,5", "2,0", "3,0")
     }
 
     private var record: AudioRecord? = null
+    /** Hasta cuando sigue leyendo el micro tras soltar. Ver `stopCapture`. */
+    @Volatile private var hastaCuando = 0L
+    @Volatile private var alCerrar: (() -> Unit)? = null
     private var recThread: Thread? = null
     @Volatile private var capturing = false
 
@@ -96,6 +101,29 @@ class AudioEngine(private val ctx: android.content.Context,
      * limitador de rodilla suave que el audio recibido.
      */
     @Volatile var micGain = 1.0f
+
+    /* CUÁNTO SATURA EL MICRÓFONO. Se cuentan las muestras pegadas al techo
+     * sobre el total: es la única forma de distinguir "el códec suena mal" de
+     * "estás comiéndote el micro", y desde fuera esas dos cosas se oyen igual.
+     * A 8 kHz, un 1 % ya son ochenta muestras por segundo recortadas. */
+    @Volatile var recortadas = 0L
+    @Volatile var muestras = 0L
+
+    fun reiniciaRecorte() { recortadas = 0L; muestras = 0L }
+
+    /** Porcentaje de muestras recortadas desde el último reinicio. */
+    fun porcentajeRecorte(): Double =
+        if (muestras == 0L) 0.0 else recortadas * 100.0 / muestras
+
+    private fun miraRecorte(pcm: ShortArray, n: Int) {
+        var c = 0
+        for (i in 0 until n) {
+            val v = pcm[i].toInt()
+            if (v >= 32000 || v <= -32000) c++
+        }
+        recortadas += c
+        muestras += n
+    }
     /**
      * Fuente de audio: `VOICE_COMMUNICATION` (con cancelacion de eco y ruido del
      * propio equipo) o el microfono **crudo**. En un ROM chino barato el
@@ -109,14 +137,27 @@ class AudioEngine(private val ctx: android.content.Context,
     private var track: AudioTrack? = null
     private var playThread: Thread? = null
     @Volatile private var playing = false
+    /* El colchón de reproducción de verdad: lo que se escribe aquí sale al
+       ritmo del reloj de audio, así que absorbe solo las ráfagas. Ojo, esto ya
+       amortigua — encima de esto NO hace falta un segundo colchón, sólo
+       reordenar (ver `RETRASO_LOTES` en NodoService). */
     private val queue = ArrayBlockingQueue<ShortArray>(64)
-    @Volatile private var primed = false
 
     // ---------------------------------------------------------- captura ----
-    fun startCapture(): Boolean {
-        if (capturing) return true
-        agcGain = 1.0f                      // cada pulsacion empieza limpia
-        agcFrames = 0
+    /** EL MICRO SE PREPARA ANTES DE QUE HAGA FALTA.
+     *
+     *  Construir un `AudioRecord` no es gratis: reservarlo, inicializarlo y
+     *  arrancar la grabacion se lleva **cientos de milisegundos** en un movil
+     *  modesto, y hacerlo dentro de `startCapture()` significaba que el micro
+     *  todavia no capturaba cuando el usuario ya estaba hablando. El sintoma
+     *  llega como *«aprieto y hablo y se come el principio»*, y no es
+     *  impaciencia del que habla: es que el aparato no estaba listo.
+     *
+     *  Se crea UNA vez y se reutiliza; entre pulsaciones queda parado, que no
+     *  es lo mismo que abierto — no graba nada ni enciende el indicador de
+     *  microfono del sistema. */
+    fun preparaMicro(): Boolean {
+        if (record != null) return true
         val min = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT)
         if (min <= 0) return false
@@ -134,33 +175,101 @@ class AudioEngine(private val ctx: android.content.Context,
         }
         if (r == null || r.state != AudioRecord.STATE_INITIALIZED) {
             Log.e("ptt", "no se pudo abrir el microfono")
+            try { r?.release() } catch (_: Exception) {}
             return false
         }
         record = r
+        return true
+    }
+
+    fun startCapture(): Boolean {
+        if (capturing) return true
+        if (!preparaMicro()) return false
+        val r = record ?: return false
+        /* ⚠️ EL AGC **NO** SE REINICIA EN CADA PULSACION.
+           Arrancaba en 1.0 y tardaba ocho tramas en encontrar el nivel, asi que
+           las primeras palabras salian bajas — con lo que a *«se come el
+           principio»* se sumaba *«y lo poco que llega, flojo»*. La ganancia
+           buena de la pulsacion anterior es el mejor punto de partida posible:
+           misma voz, mismo micro, misma distancia. Solo se rearma el contador
+           de arranque, para que corrija deprisa si algo ha cambiado. */
+        agcFrames = 0
         capturing = true
         r.startRecording()
         recThread = Thread({
             val buf = ShortArray(FRAME)
-            while (capturing) {
+            while (capturing || System.currentTimeMillis() < hastaCuando) {
                 var got = 0
-                while (got < FRAME && capturing) {
+                while (got < FRAME) {
                     val n = r.read(buf, got, FRAME - got)
                     if (n <= 0) break
                     got += n
                 }
                 if (got == FRAME) {
+                    /* ⚠️ EL RECORTE SE MIRA ANTES DE TOCAR NADA. Si la señal
+                       ya llega pegada al techo desde el ADC, el daño está
+                       hecho: ni el AGC ni la ganancia lo pueden deshacer, y lo
+                       único que sirve es separarse del micro o bajar la
+                       entrada. Sin medirlo, eso se confunde con "el códec suena
+                       mal" — que es exactamente lo que pasó el 10-sep-2026. */
+                    miraRecorte(buf, FRAME)
                     nivelar(buf, FRAME)
-                    if (micGain > 1.0f) aplicar(buf, FRAME, micGain)
+                    /* Y AQUI SE APLICA AUNQUE SEA MENOR QUE 1. Estaba puesto
+                       `> 1.0f`, o sea que la ganancia del micro solo podia
+                       SUBIR: no habia forma de atenuar una entrada que satura,
+                       que es justo lo que hacia falta. */
+                    if (micGain != 1.0f) aplicar(buf, FRAME, micGain)
                     onFrame(buf)
                 }
             }
+            try { r.stop() } catch (_: Exception) {}
+            val f = alCerrar
+            alCerrar = null
+            f?.invoke()
         }, "ptt-rec").apply { priority = Thread.MAX_PRIORITY; start() }
         return true
     }
 
-    fun stopCapture() {
+    /** LA COLA DEL PTT, y es la misma idea que la del amplificador.
+     *
+     *  Al soltar, en el buffer del micro queda audio **ya capturado** que
+     *  todavia no se ha leido —hasta unos 160 ms— y cortar en seco lo tiraba:
+     *  de ahi *«si sueltas al acabar de hablar no llega la ultima palabra»*.
+     *  No es que falte grabar: es que falta LEER lo que ya estaba grabado.
+     *
+     *  Asi que la captura sigue viva `colaMs` mas, se vacia lo pendiente, y el
+     *  cierre de la transmision —el ultimo lote y el FIN— se hace DESPUES,
+     *  desde el propio hilo de captura, con `alTerminar`. Nadie se queda
+     *  bloqueado esperando. */
+    fun stopCapture(colaMs: Int = 0, alTerminar: (() -> Unit)? = null) {
+        val hilo = recThread
+        alCerrar = alTerminar
+        hastaCuando = System.currentTimeMillis() + colaMs
         capturing = false
-        recThread?.join(300)
+        /* ⚠️ EL CIERRE TIENE QUE OCURRIR SIEMPRE, HAYA HILO O NO.
+           Con cola, el aviso lo da el hilo de captura al terminar de vaciar...
+           pero si ese hilo NO EXISTE —el micro no llegó a abrirse, o el enlace
+           se cayó a mitad de la pulsación— no lo da nadie: el FIN no se manda
+           nunca y el nodo se queda con el PTT tomado hasta su TOT. Visto en el
+           aire: PTT trabado sin tocar nada, y hubo que cerrar la app.
+           Un cierre que depende de que algo haya salido bien no es un cierre. */
+        if (colaMs <= 0 || hilo == null || !hilo.isAlive) {
+            hilo?.join(400)
+            recThread = null
+            val f = alCerrar
+            alCerrar = null
+            f?.invoke()
+        } else {
+            recThread = null            // el hilo se cierra y avisa el solo
+        }
+    }
+
+    /** Suelta el microfono del todo. Solo al parar el servicio: entre
+     *  pulsaciones interesa tenerlo preparado (ver `preparaMicro`). */
+    fun sueltaMicro() {
+        capturing = false
+        hastaCuando = 0
+        recThread?.join(400)
         recThread = null
         try { record?.stop() } catch (_: Exception) {}
         try { record?.release() } catch (_: Exception) {}
@@ -272,13 +381,11 @@ class AudioEngine(private val ctx: android.content.Context,
             queue.poll()
             queue.offer(pcm.copyOf())
         }
-        primed = queue.size >= JITTER_START
     }
 
     /** Nueva llamada entrante: se vacia lo que quedara de la anterior. */
     fun resetPlayback() {
         queue.clear()
-        primed = false
     }
 
     // ------------------------------------------------------------ avisos ---
@@ -357,7 +464,7 @@ class AudioEngine(private val ctx: android.content.Context,
     }
 
     fun release() {
-        stopCapture()
+        sueltaMicro()
         playing = false
         playThread?.interrupt()
         playThread = null

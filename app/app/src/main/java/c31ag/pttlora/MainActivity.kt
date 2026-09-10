@@ -33,11 +33,30 @@ private const val REFLECTOR_RESPALDO = "urf.adan.ovh"
 
 class MainActivity : Activity(), NodoService.Observador {
 
+    /* ASPECTO CLARO / OSCURO, sin AppCompat.
+     *
+     * Los colores viven en `values/` y `values-night/`, así que seguir al
+     * sistema sale gratis. Para FORZAR uno se sobrescribe el modo de la
+     * configuración antes de que se resuelva ningún recurso — y eso sólo se
+     * puede hacer aquí, en `attachBaseContext`: en `onCreate` ya es tarde,
+     * porque el tema de la ventana ya está elegido. */
+    override fun attachBaseContext(base: android.content.Context) {
+        val tema = Prefs(base).tema
+        if (tema == 0) { super.attachBaseContext(base); return }
+        val cfg = android.content.res.Configuration(base.resources.configuration)
+        cfg.uiMode = (cfg.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or
+            (if (tema == 2) android.content.res.Configuration.UI_MODE_NIGHT_YES
+             else android.content.res.Configuration.UI_MODE_NIGHT_NO)
+        super.attachBaseContext(base.createConfigurationContext(cfg))
+    }
+
     private lateinit var prefs: Prefs
     private lateinit var tEstado: TextView
     private lateinit var tQuien: TextView
     private lateinit var tLog: TextView
     private lateinit var bPtt: Button
+    private lateinit var rueda: android.widget.LinearLayout
     private val ui = Handler(Looper.getMainLooper())
     private var dialogoCodigo = false
 
@@ -49,6 +68,10 @@ class MainActivity : Activity(), NodoService.Observador {
         tQuien = findViewById(R.id.quien)
         tLog = findViewById(R.id.log)
         bPtt = findViewById(R.id.ptt)
+        rueda = findViewById(R.id.rueda)
+        Nombres.arranca(this)
+        Nombres.alLlegar = { ui.post { pintaRueda() } }
+        pintaRueda()
 
         findViewById<Button>(R.id.ajustes).setOnClickListener { ajustes() }
         findViewById<Button>(R.id.salir).setOnClickListener { salir() }
@@ -187,6 +210,8 @@ class MainActivity : Activity(), NodoService.Observador {
         val eInd = v.findViewById<EditText>(R.id.indicativo)
         val bNodo = v.findViewById<Button>(R.id.nodo)
         val bModo = v.findViewById<Button>(R.id.modo)
+        val bMicro = v.findViewById<Button>(R.id.micro)
+        val bColchon = v.findViewById<Button>(R.id.colchon)
         val bPerfil = v.findViewById<Button>(R.id.perfil)
         val bWifi = v.findViewById<Button>(R.id.wifi)
         val bRadio = v.findViewById<Button>(R.id.radio)
@@ -198,10 +223,27 @@ class MainActivity : Activity(), NodoService.Observador {
         }
         bNodo.text = textoNodo()
         bModo.text = "Códec: " + Codec2.NOMBRES[prefs.modo]
+        fun textoMicro(): String {
+            val g = AudioEngine.MIC_GANANCIAS.getOrElse(prefs.micGanancia) { 1.0f }
+            val extra = (if (!prefs.micAgc) " · sin nivelador" else "") +
+                        (if (prefs.micCrudo) " · crudo" else "")
+            return "Micrófono: ×%.1f%s".format(g, extra)
+        }
+        bMicro.text = textoMicro()
+        fun textoColchon() = "Colchón: " + Prefs.COLCHONES[prefs.retrasoLotes]
+        bColchon.text = textoColchon()
         bPerfil.text = "Papel: " + Prefs.PERFILES[prefs.perfil]
-        fun textoRadio() = "Radio: %.3f MHz · sf%d/%d · canal %d · %d dBm".format(
-            prefs.frecuenciaKHz / 1000.0, prefs.sf, prefs.anchoKHz,
-            prefs.canalLogico, prefs.potencia)
+        /* Se marca lo que NO está en valores de fábrica. Quien haya tocado algo
+           sin querer lo ve desde fuera, sin tener que abrir el diálogo. */
+        fun textoRadio(): String {
+            val d = Prefs.PorDefecto
+            val tocado = prefs.frecuenciaKHz != d.FREC_KHZ || prefs.sf != d.SF ||
+                         prefs.anchoKHz != d.ANCHO_KHZ || prefs.canalLogico != d.CANAL
+            return "Radio: %.3f MHz · sf%d/%d · canal %d · %d dBm%s".format(
+                prefs.frecuenciaKHz / 1000.0, prefs.sf, prefs.anchoKHz,
+                prefs.canalLogico, prefs.potencia,
+                if (tocado) "  ⚠️ cambiado" else "")
+        }
         bRadio.text = textoRadio()
         bRadio.setOnClickListener { ajustesRadio { bRadio.text = textoRadio() } }
         bWifi.text = if (prefs.wifiSsid.isBlank()) "WiFi del nodo: sin poner"
@@ -211,10 +253,13 @@ class MainActivity : Activity(), NodoService.Observador {
         val bRed = v.findViewById<Button>(R.id.red)
         val bEnlace = v.findViewById<Button>(R.id.enlace)
         bRed.setOnClickListener { redDelNodo() }
-        /* El registro cuelga del boton de la radio con una pulsacion larga y
-           tambien del propio estado: una recepcion dura segundos y quien no
-           estaba mirando se la pierde entera. */
-        bRadio.setOnLongClickListener { registro(); true }
+        /* La pulsacion larga de «Radio» abre lo AVANZADO —canal, SF y ancho—,
+           que es lo que puede dejarte fuera de la red. Antes abria el registro,
+           que se queda igual de accesible desde el boton «Registro» de este
+           mismo dialogo y desde el estado de la pantalla principal. */
+        bRadio.setOnLongClickListener {
+            ajustesRadioAvanzado { bRadio.text = textoRadio() }; true
+        }
         bEnlace.setOnClickListener { enlaces() }
         val bDatos = v.findViewById<Button>(R.id.datos)
         fun textoDatos() = "Camino de datos: " +
@@ -222,9 +267,63 @@ class MainActivity : Activity(), NodoService.Observador {
         bDatos.text = textoDatos()
         bDatos.setOnClickListener { caminoDeDatos { bDatos.text = textoDatos() } }
         val bPos = v.findViewById<Button>(R.id.posicion)
-        fun textoPos() = "Posición: " + if (prefs.posActiva) "encendida" else "apagada"
+        fun textoPos() = "Posición y APRS: " + if (prefs.posActiva) "encendida" else "apagada"
         bPos.text = textoPos()
         bPos.setOnClickListener { posicion { bPos.text = textoPos() } }
+        val bTema = v.findViewById<Button>(R.id.tema)
+        val nombresTema = arrayOf("Como el sistema", "Claro", "Oscuro")
+        fun textoTema() = "Aspecto: " + nombresTema[prefs.tema]
+        bTema.text = textoTema()
+        bTema.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Aspecto")
+                .setItems(nombresTema) { _, i ->
+                    if (i != prefs.tema) {
+                        prefs.tema = i
+                        // Se rehace la pantalla: el tema se elige antes de
+                        // inflar, así que no basta con repintar.
+                        recreate()
+                    }
+                }.show()
+        }
+        val bNombres = v.findViewById<Button>(R.id.nombres)
+        fun textoNombres() = "Nombres de los operadores: " +
+            if (prefs.nombresActivo) "sí" else "no"
+        bNombres.text = textoNombres()
+        bNombres.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Nombres de los operadores")
+                .setMessage("En la lista de quién ha hablado, junto al " +
+                    "indicativo puede salir el nombre — «EA3XYZ · Marc». En " +
+                    "una rueda con varios se reconoce mucho antes un nombre " +
+                    "que un distintivo.\n\n" +
+                    "Se consulta una vez en radioid.net y se guarda en el " +
+                    "móvil, así que después funciona SIN COBERTURA. Lo que se " +
+                    "consulta es un indicativo, que ya va en claro por el aire " +
+                    "en cada transmisión.\n\n" +
+                    "Si lo apagas, sale el indicativo a secas.")
+                .setPositiveButton(if (prefs.nombresActivo) "Apagar" else "Encender") { _, _ ->
+                    prefs.nombresActivo = !prefs.nombresActivo
+                    bNombres.text = textoNombres()
+                }
+                .setNeutralButton("Borrar lo guardado") { _, _ ->
+                    Nombres.olvida(); aviso("Nombres borrados del móvil.")
+                }
+                .setNegativeButton("Dejarlo", null)
+                .show()
+        }
+        v.findViewById<Button>(R.id.reiniciar).setOnClickListener {
+            val svc = NodoService.instancia
+            if (svc == null || !svc.enlazado) { aviso("Primero hay que estar enlazado con el nodo."); return@setOnClickListener }
+            AlertDialog.Builder(this)
+                .setTitle("Reiniciar el nodo")
+                .setMessage("El nodo se apaga y vuelve en unos 20 segundos. La " +
+                    "app se reconecta sola.\n\nHace falta, por ejemplo, después " +
+                    "de cambiarle la WiFi a un nodo con firmware antiguo.")
+                .setPositiveButton("Reiniciar") { _, _ -> svc.reiniciaNodo() }
+                .setNegativeButton("Dejarlo", null)
+                .show()
+        }
         v.findViewById<Button>(R.id.firmware).setOnClickListener { eligeFirmware() }
         bWifi.setOnClickListener { wifiDelNodo { bWifi.text =
             if (prefs.wifiSsid.isBlank()) "WiFi del nodo: sin poner"
@@ -242,10 +341,72 @@ class MainActivity : Activity(), NodoService.Observador {
                         .setPositiveButton("Vale", null).show()
                 }.show()
         }
+        /* EL COLCHON, Y POR QUE SE PUEDE APAGAR.
+           Esperar antes de reproducir permite reordenar los lotes y tapar con
+           Internet lo que la radio no trajo, pero se paga en retardo y toca el
+           borde de cada frase. Que se pueda poner en «directo» no es una
+           coquetería: es poder volver a un comportamiento conocido sin esperar
+           una versión nueva, y poder comparar las dos cosas en el aire en vez
+           de discutirlas. */
+        /* EL MICRÓFONO, Y POR QUÉ SE PUEDE BAJAR.
+           El micro de un móvil entrega de sobra, y hablando de cerca **satura**
+           — la voz sale rota y desde el otro lado eso se oye exactamente igual
+           que un códec malo o una radio con pérdidas. Costó una tarde de
+           perseguir el códec y el colchón antes de dar con ello, así que aquí
+           hay tres mandos y, sobre todo, un aviso: cuando el micro recorta, el
+           registro lo dice al soltar el PTT en vez de dejarte adivinando. */
+        bMicro.setOnClickListener {
+            val col = android.widget.LinearLayout(this)
+            col.orientation = android.widget.LinearLayout.VERTICAL
+            col.setPadding(40, 20, 40, 0)
+            val cAgc = android.widget.CheckBox(this)
+            cAgc.text = "Nivelador automático"
+            cAgc.isChecked = prefs.micAgc
+            val cCrudo = android.widget.CheckBox(this)
+            cCrudo.text = "Micrófono crudo (sin el procesado del sistema)"
+            cCrudo.isChecked = prefs.micCrudo
+            col.addView(cAgc); col.addView(cCrudo)
+            AlertDialog.Builder(this)
+                .setTitle("Micrófono")
+                .setMessage("Si te oyen la voz rota, casi siempre es que el " +
+                            "micro satura: sepárate un palmo o baja la " +
+                            "ganancia. El registro avisa cuando recorta.\n\n" +
+                            "Ganancia actual: " + textoMicro())
+                .setView(col)
+                .setPositiveButton("Elegir ganancia…") { _, _ ->
+                    prefs.micAgc = cAgc.isChecked
+                    prefs.micCrudo = cCrudo.isChecked
+                    AlertDialog.Builder(this)
+                        .setTitle("Ganancia del micrófono")
+                        .setItems(AudioEngine.MIC_NOMBRES) { _, i ->
+                            prefs.micGanancia = i
+                            bMicro.text = textoMicro()
+                        }.show()
+                }
+                .setNegativeButton("Guardar") { _, _ ->
+                    prefs.micAgc = cAgc.isChecked
+                    prefs.micCrudo = cCrudo.isChecked
+                    bMicro.text = textoMicro()
+                }.show()
+        }
+
+        bColchon.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Colchón de audio")
+                .setMessage("Cuánto se espera antes de reproducir. Más colchón " +
+                            "tapa mejor los lotes perdidos; menos, responde antes.")
+                .setItems(Prefs.COLCHONES) { _, i ->
+                    prefs.retrasoLotes = i
+                    bColchon.text = textoColchon()
+                }.show()
+        }
+
         bModo.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle("Modo de Codec2")
-                .setItems(Codec2.NOMBRES) { _, i ->
+                .setItems(Codec2.NOMBRES.mapIndexed { i, n ->
+                    if (i == Prefs.PorDefecto.MODO) "$n  (por defecto)" else n
+                }.toTypedArray()) { _, i ->
                     prefs.modo = i
                     bModo.text = "Códec: " + Codec2.NOMBRES[i]
                 }.show()
@@ -445,7 +606,13 @@ class MainActivity : Activity(), NodoService.Observador {
             .setTitle(if (modo == 1) "Conectar el nodo a una red" else "WiFi propio del nodo")
             .setView(col)
             .setPositiveButton("Guardar en el nodo") { _, _ ->
-                val ssid = eSsid.text.toString()
+                /* ⚠️ `trim()`, y no es cosmético: el otro diálogo de WiFi lo
+                   hacía y éste no, y un espacio final colado por el teclado del
+                   móvil dejó un nodo horas con `wifi=buscando` contra una red
+                   que no existe. No hay forma de verlo: el nombre se ve igual
+                   con espacio que sin él. La clave NO se toca — ahí un espacio
+                   puede ser parte de la contraseña de verdad. */
+                val ssid = eSsid.text.toString().trim()
                 val clave = eClave.text.toString()
                 if (modo == 2 && clave.length < 8) {
                     aviso("El punto de acceso necesita una clave de 8 caracteres " +
@@ -476,13 +643,28 @@ class MainActivity : Activity(), NodoService.Observador {
                  "y no hay que abrir ningún puerto en tu router. Puedes poner " +
                  "dos: el segundo solo se usa si el primero no responde.\n\n" +
                  "El nodo necesita estar conectado a una red con Internet."
-        val e1 = EditText(this); e1.hint = "Principal (p. ej. $REFLECTOR)"
+        /* El valor de fábrica se enseña SIEMPRE, no sólo como pista del campo
+           vacío: quien los borre probando tiene que poder volver a poner lo que
+           había sin buscarlo en ningún sitio. */
+        val tDef = TextView(this)
+        tDef.text = "\nPor defecto:\n  principal  ${Prefs.PorDefecto.ENLACE1}" +
+                    "\n  respaldo   ${Prefs.PorDefecto.ENLACE2}\n"
+        val e1 = EditText(this); e1.hint = Prefs.PorDefecto.ENLACE1
         e1.setText(prefs.enlace1)
-        val e2 = EditText(this); e2.hint = "Respaldo (opcional)"
+        val e2 = EditText(this); e2.hint = Prefs.PorDefecto.ENLACE2
         e2.setText(prefs.enlace2)
-        col.addView(t); col.addView(e1); col.addView(e2)
+        col.addView(t); col.addView(tDef); col.addView(e1); col.addView(e2)
         AlertDialog.Builder(this)
             .setTitle("Enlace con otros nodos")
+            .setNeutralButton("Poner los de fábrica") { _, _ ->
+                prefs.enlace1 = Prefs.PorDefecto.ENLACE1
+                prefs.enlace2 = Prefs.PorDefecto.ENLACE2
+                val s2 = NodoService.instancia
+                s2?.mandaEnlace("", Nodo.PUERTO_ENLACE)
+                s2?.mandaEnlace(prefs.enlace1, Nodo.PUERTO_ENLACE)
+                s2?.mandaEnlace(prefs.enlace2, Nodo.PUERTO_ENLACE)
+                aviso("Enlaces restaurados. El nodo se conecta en unos segundos.")
+            }
             .setView(col)
             .setPositiveButton("Guardar en el nodo") { _, _ ->
                 prefs.enlace1 = e1.text.toString().trim()
@@ -679,7 +861,10 @@ class MainActivity : Activity(), NodoService.Observador {
         val e = EditText(this)
         e.setText("%s:%d".format(prefs.datosHost, prefs.datosPuerto))
         e.setSingleLine(true)
-        col.addView(t); col.addView(e)
+        val tDef = TextView(this)
+        tDef.text = "Por defecto: ${Prefs.PorDefecto.DATOS_HOST}:" +
+                    "${Prefs.PorDefecto.DATOS_PUERTO}"
+        col.addView(t); col.addView(e); col.addView(tDef)
 
         AlertDialog.Builder(this)
             .setTitle("Camino de datos")
@@ -694,8 +879,12 @@ class MainActivity : Activity(), NodoService.Observador {
             .setView(col)
             .setPositiveButton(if (prefs.datosActivo) "Guardar" else "Activar") { _, _ ->
                 val txt = e.text.toString().trim()
-                val host = txt.substringBefore(':').ifBlank { "or.adan.ovh" }
-                val pto = txt.substringAfter(':', "4460").toIntOrNull() ?: 4460
+                /* Vacío = el de fábrica, no un error: si alguien borra el
+                   campo probando, lo peor que puede pasar es que vuelva a
+                   funcionar como venía. */
+                val host = txt.substringBefore(':').ifBlank { Prefs.PorDefecto.DATOS_HOST }
+                val pto = txt.substringAfter(':', "").toIntOrNull()
+                    ?: Prefs.PorDefecto.DATOS_PUERTO
                 prefs.datosHost = host
                 prefs.datosPuerto = pto
                 prefs.datosActivo = true
@@ -725,9 +914,11 @@ class MainActivity : Activity(), NodoService.Observador {
                esa confusión costó una mañana el 9-sep. */
             val estado = NodoService.instancia?.posTexto ?: "el servicio no está en marcha"
             AlertDialog.Builder(this)
-                .setTitle("Posición")
+                .setTitle("Posición y APRS")
                 .setMessage("Tu posición sale en el INICIO de cada transmisión: " +
                     "cuando aprietas el PTT, no cada minuto.\n\n" +
+                    "Va por radio, y desde una celda con Internet puede " +
+                    "publicarse en APRS-IS y verse en aprs.fi.\n\n" +
                     "Último envío al nodo:\n$estado")
                 .setPositiveButton("Apagar") { _, _ ->
                     prefs.posActiva = false
@@ -740,13 +931,17 @@ class MainActivity : Activity(), NodoService.Observador {
         }
         AlertDialog.Builder(this)
             .setTitle("Posición")
-            .setMessage("Tu posición viajará en el INICIO de cada transmisión " +
-                "—cuando aprietas el PTT, no cada minuto— y así sales en el " +
-                "mapa de la red y en aprs.fi.\n\n" +
-                "⚠️ Va POR RADIO Y EN CLARO, y la repiten los demás nodos: " +
-                "cualquiera con un receptor puede leerla. No es como mandarla a " +
-                "un servidor — es algo que emite tu estación, igual que el " +
+            .setMessage("Tu posición viajará en el INICIO de cada transmisión, " +
+                "cuando aprietas el PTT — no cada minuto.\n\n" +
+                "SALE POR DOS SITIOS, y conviene tener claros los dos:\n\n" +
+                "1) POR RADIO Y EN CLARO. La repiten los demás nodos, así que " +
+                "cualquiera con un receptor puede leerla. No es como mandarla " +
+                "a un servidor: es algo que emite tu estación, igual que el " +
                 "indicativo.\n\n" +
+                "2) EN APRS-IS, si una celda con Internet la publica. Entonces " +
+                "sales en aprs.fi con tu indicativo — que es PÚBLICO, lo ve " +
+                "cualquiera, y queda guardado en el histórico PARA SIEMPRE. " +
+                "Borrarlo después no está en tu mano.\n\n" +
                 "Apagándola, el nodo la olvida y deja de publicarla.")
             .setPositiveButton("Encender") { _, _ ->
                 /* El permiso se pide AQUI y no al arrancar la app: pedir la
@@ -954,6 +1149,14 @@ class MainActivity : Activity(), NodoService.Observador {
      *  salga aquí, con el teclado delante, en vez de tres segundos después en
      *  el registro. Quien tenga otra atribución cambia `BANDA_MIN`/`BANDA_MAX`
      *  en el firmware y compila lo suyo. */
+    /** Radio: **sólo frecuencia y potencia**.
+     *
+     *  El canal lógico, el spreading factor y el ancho de banda se fueron a
+     *  «Avanzado» (pulsación larga en el botón). No es por esconderlos: es que
+     *  **cambiarlos rompe la red y el síntoma no lo explica**. Con un SF
+     *  distinto dos nodos no se oyen peor — no se oyen, y el usuario lo vive
+     *  como «de repente no hay nadie». Frecuencia y potencia, en cambio, se
+     *  entienden solas y son las que uno quiere tocar de verdad. */
     private fun ajustesRadio(luego: () -> Unit) {
         val hw = NodoService.instancia?.limitesHw
         val pMin = hw?.get(2)?.toInt() ?: 2
@@ -967,46 +1170,33 @@ class MainActivity : Activity(), NodoService.Observador {
         col.setPadding(40, 20, 40, 0)
 
         val tFrec = TextView(this)
+        tFrec.text = ("Frecuencia en MHz — por defecto %s\n\n" +
+                      "Tiene que ser LA MISMA en todos los nodos que se quieran " +
+                      "oír. Rango permitido: %.0f–%.0f, banda de aficionados; " +
+                      "necesitas licencia e indicativo para transmitir aquí.")
+                     .format(Prefs.PorDefecto.frecMHz(), fMin, fMax)
         val eFrec = EditText(this)
         eFrec.inputType = android.text.InputType.TYPE_CLASS_NUMBER or
                           android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         eFrec.setText("%.3f".format(prefs.frecuenciaKHz / 1000.0))
-        tFrec.text = ("Frecuencia en MHz (%.0f–%.0f, banda de aficionados).\n" +
-                      "Necesitas licencia e indicativo para transmitir aquí.")
-                     .format(fMin, fMax)
-
-        val tCanal = TextView(this)
-        tCanal.text = "\nCanal (0–255): separa grupos en la misma frecuencia"
-        val eCanal = EditText(this)
-        eCanal.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        eCanal.setText(prefs.canalLogico.toString())
 
         val tPot = TextView(this)
+        tPot.text = "\nPotencia en dBm ($pMin–$pMax) — por defecto " +
+                    "${Prefs.PorDefecto.POTENCIA}\n\n" +
+                    "Bajarla no te saca de la red: sólo llegas menos lejos. " +
+                    "Para probar dos placas en la misma mesa, ponla en 2."
         val ePot = EditText(this)
         ePot.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         ePot.setText(prefs.potencia.toString())
-        tPot.text = "\nPotencia en dBm ($pMin–$pMax). En ISM 433 el límite " +
-                    "legal son 10 mW (10 dBm); en banda de aficionado, más."
 
-        /* SF Y ANCHO DE BANDA, que antes estaban clavados en el código.
-           Se avisa de lo que son: parametros de CANAL. Con SF distinto dos
-           nodos no se oyen peor — no se oyen. */
-        val tSf = TextView(this)
-        tSf.text = "\nSpreading factor (7–12) y ancho en kHz (125 o 250).\n" +
-                   "Cada punto de SF son ~3 dB (más alcance) y el DOBLE de " +
-                   "tiempo en el aire. Tienen que ser IGUALES en todos los " +
-                   "nodos: si no, no se oyen."
-        val eSf = EditText(this)
-        eSf.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        eSf.setText(prefs.sf.toString())
-        val eBw = EditText(this)
-        eBw.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        eBw.setText(prefs.anchoKHz.toString())
+        val tOtros = TextView(this)
+        tOtros.text = "\nCanal ${prefs.canalLogico} · SF ${prefs.sf} · " +
+                      "${prefs.anchoKHz} kHz\n(mantén pulsado «Radio» para " +
+                      "cambiarlos — sólo si sabes lo que haces)"
 
         col.addView(tFrec); col.addView(eFrec)
-        col.addView(tCanal); col.addView(eCanal)
-        col.addView(tSf); col.addView(eSf); col.addView(eBw)
         col.addView(tPot); col.addView(ePot)
+        col.addView(tOtros)
 
         AlertDialog.Builder(this)
             .setTitle("Radio")
@@ -1022,24 +1212,72 @@ class MainActivity : Activity(), NodoService.Observador {
                     return@setPositiveButton
                 }
                 prefs.frecuenciaKHz = f.toInt()
-                prefs.canalLogico = eCanal.text.toString().toIntOrNull() ?: 1
-                prefs.sf = eSf.text.toString().toIntOrNull() ?: 8
-                prefs.anchoKHz = eBw.text.toString().toIntOrNull() ?: 250
                 prefs.potencia = ePot.text.toString().toIntOrNull() ?: pMax
                 NodoService.instancia?.mandaRadio()
                 luego()
             }
-            .setNeutralButton("Canales") { _, _ ->
-                val n = Prefs.CANALES.map { "%.3f MHz".format(it / 1000.0) }
-                AlertDialog.Builder(this)
-                    .setTitle("Frecuencias sugeridas")
-                    .setItems(n.toTypedArray()) { _, i ->
-                        prefs.frecuenciaKHz = Prefs.CANALES[i]
-                        NodoService.instancia?.mandaRadio()
-                        luego()
-                    }.show()
+            .setNeutralButton("Valores de fábrica") { _, _ ->
+                confirma("Volver a los valores de fábrica",
+                    "Frecuencia ${Prefs.PorDefecto.frecMHz()} MHz, " +
+                    "potencia ${Prefs.PorDefecto.POTENCIA} dBm, canal " +
+                    "${Prefs.PorDefecto.CANAL}, SF ${Prefs.PorDefecto.SF}, " +
+                    "${Prefs.PorDefecto.ANCHO_KHZ} kHz.\n\n" +
+                    "Es la configuración con la que la red funciona.") {
+                    prefs.frecuenciaKHz = Prefs.PorDefecto.FREC_KHZ
+                    prefs.potencia = Prefs.PorDefecto.POTENCIA
+                    prefs.canalLogico = Prefs.PorDefecto.CANAL
+                    prefs.sf = Prefs.PorDefecto.SF
+                    prefs.anchoKHz = Prefs.PorDefecto.ANCHO_KHZ
+                    NodoService.instancia?.mandaRadio()
+                    luego()
+                }
             }
             .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    /** Lo que puede dejarte fuera de la red, detrás de una pulsación larga. */
+    private fun ajustesRadioAvanzado(luego: () -> Unit) {
+        val col = android.widget.LinearLayout(this)
+        col.orientation = android.widget.LinearLayout.VERTICAL
+        col.setPadding(40, 20, 40, 0)
+        val t = TextView(this)
+        t.text = "⚠️ ESTO TE PUEDE DEJAR FUERA DE LA RED.\n\n" +
+                 "Estos tres tienen que ser IDÉNTICOS en todos los nodos. Si " +
+                 "no coinciden, no se oyen peor: NO SE OYEN, y no hay ningún " +
+                 "aviso que lo explique.\n\n" +
+                 "Por defecto: canal ${Prefs.PorDefecto.CANAL}, " +
+                 "SF ${Prefs.PorDefecto.SF}, ${Prefs.PorDefecto.ANCHO_KHZ} kHz."
+        val eCanal = EditText(this); eCanal.hint = "Canal (0–255)"
+        eCanal.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        eCanal.setText(prefs.canalLogico.toString())
+        val eSf = EditText(this); eSf.hint = "Spreading factor (7–12)"
+        eSf.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        eSf.setText(prefs.sf.toString())
+        val eBw = EditText(this); eBw.hint = "Ancho de banda en kHz (125 o 250)"
+        eBw.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        eBw.setText(prefs.anchoKHz.toString())
+        col.addView(t); col.addView(eCanal); col.addView(eSf); col.addView(eBw)
+        AlertDialog.Builder(this)
+            .setTitle("Radio · avanzado")
+            .setView(android.widget.ScrollView(this).apply { addView(col) })
+            .setPositiveButton("Aplicar") { _, _ ->
+                prefs.canalLogico = eCanal.text.toString().toIntOrNull() ?: Prefs.PorDefecto.CANAL
+                prefs.sf = eSf.text.toString().toIntOrNull() ?: Prefs.PorDefecto.SF
+                prefs.anchoKHz = eBw.text.toString().toIntOrNull() ?: Prefs.PorDefecto.ANCHO_KHZ
+                NodoService.instancia?.mandaRadio()
+                luego()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    /** Confirmación corta y reutilizable para lo que se puede romper. */
+    private fun confirma(titulo: String, texto: String, hazlo: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle(titulo).setMessage(texto)
+            .setPositiveButton("Sí") { _, _ -> hazlo() }
+            .setNegativeButton("Dejarlo", null)
             .show()
     }
 
@@ -1061,14 +1299,24 @@ class MainActivity : Activity(), NodoService.Observador {
             .setTitle("WiFi del nodo (opcional)")
             .setMessage("Sirve para actualizar el firmware del nodo por red, " +
                         "sin tener que bajarlo. El nodo funciona igual sin " +
-                        "esto.\n\nOJO: el nodo solo ve redes de 2,4 GHz.")
+                        "esto.\n\nGuardar aquí también pone el nodo en modo " +
+                        "cliente: si estaba levantando su propia red (AP), " +
+                        "esto es lo que lo devuelve a la tuya.\n\n" +
+                        "OJO: el nodo solo ve redes de 2,4 GHz.")
             .setView(col)
             .setPositiveButton("Guardar") { _, _ ->
                 prefs.wifiSsid = eS.text.toString().trim()
                 prefs.wifiClave = eC.text.toString()
                 NodoService.instancia?.mandaWifi()
-                Toast.makeText(this, "Enviado. Reinicia el nodo para que lo use.",
-                               Toast.LENGTH_LONG).show()
+                /* ⚠️ NO hay que reiniciar nada, y decirlo estaba haciendo daño:
+                   el firmware aplica el WiFi EN EL ACTO desde hace tiempo (ver
+                   CMD_WIFI en main.cpp, "WiFi guardado; conectando ahora"), y
+                   además es esto lo que saca al nodo del modo AP. Con el texto
+                   viejo, quien tenía el nodo en AP reiniciaba una y otra vez
+                   —que es justo lo que NO lo arregla, porque al arrancar vuelve
+                   a su ajuste guardado— en vez de mandar el comando. */
+                Toast.makeText(this, "Enviado: el nodo se conecta ahora, " +
+                               "sin reiniciar.", Toast.LENGTH_LONG).show()
                 luego()
             }
             .setNeutralButton("Quitar") { _, _ ->
@@ -1200,6 +1448,71 @@ class MainActivity : Activity(), NodoService.Observador {
             if (transmitiendo) Color.parseColor("#c62828") else Color.parseColor("#2e7d32"))
         bPtt.text = if (transmitiendo) "TRANSMITIENDO" else "PULSAR PARA HABLAR"
     } }
+
+    /** LA RUEDA: qué se ha dicho, en qué orden y cuánto ha durado.
+     *
+     *  Una fila POR TRANSMISION y no por persona: lo que hace falta ver es el
+     *  orden real —quién entró detrás de quién— y con una sola fila por
+     *  indicativo eso se pierde en cuanto alguien habla dos veces.
+     *
+     *  ⚠️ **Y las propias van dentro.** Sin ellas la lista miente sobre el
+     *  orden: enseña a quién oíste pero no cuándo entraste tú entre medias, que
+     *  es justo lo que hace falta para seguir la rueda en un QSO con varios.
+     *
+     *  Se pinta a mano en un LinearLayout en vez de con una lista y su
+     *  adaptador: son veinte filas como mucho y así no entra ni una dependencia
+     *  más en una app que cabe en 400 KB. */
+    private val reloj = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+
+    private fun pintaRueda() {
+        val svc = NodoService.instancia
+        val lista = svc?.ultimosHablantes() ?: emptyList()
+        rueda.removeAllViews()
+        if (lista.isEmpty()) {
+            val t = TextView(this)
+            t.text = "todavía no ha hablado nadie"
+            t.textSize = 13f
+            t.setTextColor(resources.getColor(R.color.texto_flojo))
+            rueda.addView(t)
+            return
+        }
+        for (h in lista) {
+            /* El nombre, si se conoce. Nunca bloquea: si aún no ha llegado sale
+               el indicativo a secas y la línea se repinta sola cuando llegue. */
+            val nombre = Nombres.de(h.indicativo, prefs.nombresActivo)
+            val quien = if (nombre != null) "${h.indicativo} ${nombre}" else h.indicativo
+            /* La duración se escribe al CERRAR la transmisión, así que mientras
+               alguien habla todavía no la hay: se dice que está en curso en vez
+               de enseñar un 0,0 s que sería mentira. */
+            val dura = if (h.segundos > 0) "%.1fs".format(h.segundos) else "···"
+            /* Tres orígenes y tres marcas, porque significan cosas
+               distintas: 📻 ha cruzado el aire, 🌐 ha dado la vuelta por
+               Internet, y 👥 ni una cosa ni la otra — el que habla está colgado
+               de MI MISMO nodo. Verlo importa: 👥 no dice nada de la cobertura,
+               y hasta la 0.9.41 salía como 🌐. */
+            val via = when {
+                h.yo -> if (h.porRf) "▶📻" else "▶🌐"
+                h.rssi == 126 -> "👥"
+                h.porRf && h.rssi < 126 -> "📻${h.rssi}"
+                h.porRf -> "📻"
+                else -> "🌐"
+            }
+            val t = TextView(this)
+            t.text = "%s  %-18s %6s  %s".format(
+                reloj.format(java.util.Date(h.cuando)), quien.take(18), dura, via)
+            t.textSize = 14f
+            t.typeface = android.graphics.Typeface.MONOSPACE
+            t.setTextColor(when {
+                // Lo propio, en otro color: de un vistazo se ve dónde entraste.
+                h.yo -> Color.parseColor("#1565c0")
+                h.segundos <= 0.0 -> Color.parseColor("#2e7d32")   // hablando ahora
+                else -> resources.getColor(R.color.texto)
+            })
+            rueda.addView(t)
+        }
+    }
+
+    override fun onRueda() { ui.post { pintaRueda() } }
 
     override fun onLog(texto: String) { ui.post {
         tLog.text = texto

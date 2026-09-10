@@ -4,7 +4,7 @@
 #   ./ota_bt.py firmware.bin --ble AA:BB:CC:DD:EE:FF   (nodos con fw >= 1.26)
 #   ./ota_bt.py firmware.bin --bt AA:BB:CC:DD:EE:FF    (SPP, fw <= 1.25)
 #   ./ota_bt.py firmware.bin --puerto /dev/ttyACM0
-#   ./ota_bt.py firmware.bin --tcp 192.168.1.50        (por WiFi)
+#   ./ota_bt.py firmware.bin --tcp 192.168.1.61        (por WiFi)
 #   ./ota_bt.py firmware.bin --tcp 127.0.0.1:4471      (por el relevo de mando:
 #                                     asi se actualiza un nodo que esta en una
 #                                     red donde no se pueden abrir puertos)

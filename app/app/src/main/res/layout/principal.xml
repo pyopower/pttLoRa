@@ -3,6 +3,7 @@
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/fondo"
     android:padding="12dp">
 
     <TextView android:id="@+id/estado"
@@ -12,20 +13,37 @@
     <TextView android:id="@+id/quien"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:textSize="22sp" android:textStyle="bold"
+        android:textColor="@color/texto"
         android:paddingTop="8dp" android:paddingBottom="8dp" />
 
-    <!-- El PTT ocupa casi toda la pantalla a proposito: se usa a ciegas, con
-         el movil en la mano y sin mirar. -->
+    <!-- El PTT sigue siendo lo más grande de la pantalla —se usa a ciegas, con
+         el móvil en la mano y sin mirar— pero ya no se lo come todo: debajo va
+         la rueda de quién ha hablado, que es lo que hace falta mirar cuando hay
+         un QSO con varios. -->
     <Button android:id="@+id/ptt"
         android:layout_width="match_parent" android:layout_height="0dp"
-        android:layout_weight="1"
-        android:textSize="22sp" android:textStyle="bold"
+        android:layout_weight="5"
+        android:textSize="34sp" android:textStyle="bold"
         android:textColor="#ffffff"
-        android:text="PULSAR PARA HABLAR" />
+        android:text="PTT" />
+
+    <!-- ÚLTIMOS EN HABLAR. Sin balizas a propósito: una baliza no es alguien
+         hablando, y mezcladas tapan justo lo que se busca. Para las balizas
+         está el registro. -->
+    <TextView android:id="@+id/rueda_titulo"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textSize="12sp" android:textColor="@color/texto_flojo"
+        android:paddingTop="10dp" android:paddingBottom="2dp"
+        android:text="Últimos en hablar" />
+    <LinearLayout android:id="@+id/rueda"
+        android:orientation="vertical"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="3" />
 
     <TextView android:id="@+id/log"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:textSize="12sp" android:paddingTop="8dp" android:maxLines="2" />
+        android:textSize="12sp" android:textColor="@color/texto_flojo"
+        android:paddingTop="6dp" android:maxLines="2" />
 
     <!-- Ajustes y Salir juntos. El de salir hace falta de verdad: esto es un
          servicio en primer plano y cerrar la pantalla NO lo para, asi que sin

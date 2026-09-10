@@ -46,6 +46,10 @@ class Ranura:
         self.nodo = None          # socket del nodo
         self.op = None            # socket de quien lo administra
         self.quien = "?"          # indicativo, en cuanto se sepa
+        # El NOMBRE es lo que distingue a un nodo de otro: todos los nodos de
+        # un operador llevan el mismo indicativo, asi que `quien` no sirve para
+        # reconocer a uno que vuelve. Ver `mira_estado`.
+        self.nombre = "?"
         self.desde = 0
         self.ultimo_latido = 0
         self.resto = b""
@@ -59,6 +63,7 @@ class Ranura:
             except OSError: pass
         self.nodo = None
         self.quien = "?"
+        self.nombre = "?"
         self.resto = b""
 
     def cierra_op(self):
@@ -68,11 +73,35 @@ class Ranura:
         self.op = None
 
 
-def mira_estado(r, datos):
-    """Se queda con el indicativo que anuncia el nodo, sin estorbar al operador."""
-    r.resto = (r.resto + datos)[-512:]
+def mira_estado(r, datos, ranuras=(), sel=None):
+    """Se queda con el indicativo y el NOMBRE que anuncia el nodo, sin estorbar
+    al operador.
+
+    Y de paso echa a su propio fantasma. Cuando un nodo se reinicia —una OTA,
+    un corte de luz— la conexion vieja NO se cierra: el ESP32 se va sin decir
+    adios y el socket muerto sigue ocupando su ranura hasta que un envio falle.
+    Asi que el nodo que vuelve cae en OTRA ranura, el tunel de siempre apunta a
+    un tubo muerto (parece que la OTA lo ha matado) y, sobre todo, **las cuatro
+    ranuras se van llenando de fantasmas del mismo nodo**: a la cuarta vez se
+    rechaza la conexion y el nodo queda INALCANZABLE. Para uno que esta en un
+    tejado ajeno eso no tiene arreglo remoto.
+
+    En cuanto se identifica, cualquier otra ranura con el mismo nombre es el
+    fantasma de este mismo nodo, y se cierra."""
+    r.resto += datos
+    # Red de seguridad: si por lo que sea no aparece un FEND, esto no puede
+    # crecer sin fin. Pero el corte NO puede ser la forma normal de vaciarlo:
+    # con un tope de 512 bytes se perdia el principio de la trama —y con el, el
+    # byte EV_ESTADO que la identifica—, porque la linea de estado pasa de 600
+    # caracteres. Resultado: `quien` se quedaba en "?" PARA SIEMPRE y el log
+    # decia "operador dentro (?)" en cada entrada. Un fallo mudo de meses.
+    if len(r.resto) > 8192:
+        r.resto = r.resto[-8192:]
     trozos = r.resto.split(bytes([FEND]))
-    for t in trozos:
+    # Lo ultimo es lo que aun no ha terminado: se guarda para la proxima vuelta
+    # y lo demas son tramas completas, cada una vista UNA vez.
+    r.resto = trozos[-1]
+    for t in trozos[:-1]:
         if len(t) > 2 and t[0] == EV_ESTADO:
             txt = t[1:].decode("ascii", "replace")
             campos = txt.split(" ")
@@ -80,6 +109,29 @@ def mira_estado(r, datos):
                 if r.quien != campos[1]:
                     r.quien = campos[1]
                     r.dice("es", r.quien, "-", " ".join(campos[:2]))
+                nom = "?"
+                for c in campos:
+                    if c.startswith("nombre="):
+                        nom = c[7:]
+                        break
+                if nom != "?" and nom != r.nombre:
+                    r.nombre = nom
+                    r.dice("se llama", nom)
+                    for otra in ranuras:
+                        if otra is r or otra.nodo is None:
+                            continue
+                        if otra.nombre == nom:
+                            otra.dice("es el fantasma de", nom,
+                                      "- ha vuelto en la %d; se cierra" % r.n)
+                            if sel is not None:
+                                try: sel.unregister(otra.nodo)
+                                except (KeyError, ValueError): pass
+                            otra.cierra_nodo()
+                            if otra.op:
+                                if sel is not None:
+                                    try: sel.unregister(otra.op)
+                                    except (KeyError, ValueError): pass
+                                otra.cierra_op()
 
 
 def main():
@@ -117,6 +169,17 @@ def main():
                     c.close()
                     continue
                 c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                # KEEPALIVE, para que un fantasma se caiga sin esperar a que
+                # falle un envio: el latido escribe en un socket muerto sin
+                # error durante mucho tiempo. 30 s de silencio y tres sondeos
+                # cada 10 -> el fantasma cae en un minuto largo, no en horas.
+                try:
+                    c.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                    c.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+                    c.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                    c.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+                except (AttributeError, OSError):
+                    pass
                 libre.nodo = c
                 libre.desde = time.time()
                 libre.ultimo_latido = 0
@@ -145,7 +208,7 @@ def main():
                     if r.op:
                         sel.unregister(r.op); r.cierra_op()
                     continue
-                mira_estado(r, d)
+                mira_estado(r, d, ranuras, sel)
                 if r.op:
                     try: r.op.sendall(d)
                     except OSError:

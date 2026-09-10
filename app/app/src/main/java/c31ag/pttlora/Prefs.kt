@@ -5,6 +5,34 @@ import android.content.Context
 /** Ajustes de la estación. Deliberadamente pocos. */
 class Prefs(ctx: Context) {
 
+    /* ------------------------------------------------------------------
+     *  LOS VALORES DE FABRICA, EN UN SOLO SITIO.
+     *
+     *  Estaban repartidos por el codigo como numeros sueltos, y eso ya costo
+     *  un fallo silencioso: **el SF por defecto era 8 y la red va en 7**. Una
+     *  instalacion nueva, en cuanto alguien entrara en Radio y pulsara
+     *  Aplicar, le metia SF8 al nodo y lo sacaba de la red — sin error, sin
+     *  aviso, y con el sintoma de "de repente no oigo a nadie".
+     *
+     *  Ademas hace falta poder ENSEÑARLOS: quien toca un ajuste tiene derecho a
+     *  saber cual era el de antes, y a volver a el. */
+    object PorDefecto {
+        const val FREC_KHZ = 439600
+        const val SF = 7
+        const val ANCHO_KHZ = 250
+        const val CR = 5
+        const val POTENCIA = 17
+        const val CANAL = 1
+        const val MODO = Codec2.C2_1200
+        const val ENLACE1 = "or.adan.ovh:4461"
+        const val ENLACE2 = "urf.adan.ovh:4461"
+        const val DATOS_HOST = "or.adan.ovh"
+        const val DATOS_PUERTO = 4460
+
+        /** Para enseñarlo al lado de cada campo. */
+        fun frecMHz() = "%.3f".format(FREC_KHZ / 1000.0)
+    }
+
     private val p = ctx.getSharedPreferences("pttlora", Context.MODE_PRIVATE)
 
     /** Indicativo. Sin él no se transmite: es identificación de estación, no
@@ -53,7 +81,7 @@ class Prefs(ctx: Context) {
         set(v) { p.edit().putBoolean("datos_activo", v).apply() }
 
     var datosHost: String
-        get() = p.getString("datos_host", "or.adan.ovh") ?: "or.adan.ovh"
+        get() = p.getString("datos_host", PorDefecto.DATOS_HOST) ?: PorDefecto.DATOS_HOST
         set(v) { p.edit().putString("datos_host", v.trim()).apply() }
 
     var datosPuerto: Int
@@ -74,6 +102,19 @@ class Prefs(ctx: Context) {
         get() = p.getBoolean("pos_activa", false)
         set(v) { p.edit().putBoolean("pos_activa", v).apply() }
 
+    /** Aspecto: 0 = como el sistema, 1 = claro, 2 = oscuro. Por defecto sigue
+     *  al sistema, que es lo que espera casi todo el mundo. */
+    var tema: Int
+        get() = p.getInt("tema", 0)
+        set(v) { p.edit().putInt("tema", v).apply() }
+
+    /** ¿Se consulta el nombre del operador en radioid.net? Ver `Nombres`.
+     *  Encendido de fábrica: lo que se consulta es un indicativo, que ya va en
+     *  claro por el aire en cada transmisión. */
+    var nombresActivo: Boolean
+        get() = p.getBoolean("nombres", true)
+        set(v) { p.edit().putBoolean("nombres", v).apply() }
+
     var nombreNodo: String
         get() = p.getString("nodo", "") ?: ""
         set(v) = p.edit().putString("nodo", v).apply()
@@ -92,13 +133,30 @@ class Prefs(ctx: Context) {
 
     /** dBm. 17 es el máximo de estas placas; 2 para pruebas de mesa. */
     var potencia: Int
-        get() = p.getInt("potencia", 17)
+        get() = p.getInt("potencia", PorDefecto.POTENCIA)
         set(v) = p.edit().putInt("potencia", v.coerceIn(2, 17)).apply()
+
+    /** CUANTO SE ESPERA ANTES DE REPRODUCIR, EN LOTES.
+     *
+     *  0 = directo: cada lote suena en cuanto llega. Sin reordenar y sin tapar
+     *      huecos, que es como funcionaba la app hasta la 0.9.36. Es la salida
+     *      de emergencia: si algo del colchón se tuerce, aquí se vuelve a un
+     *      comportamiento conocido sin esperar a una versión nueva.
+     *  1 = 480 ms. Tapa un lote perdido suelto y deja que la copia de radio
+     *      llegue a tiempo de ganarle a la de Internet.
+     *  2 = 960 ms. Aguanta además el jitter de un salto de repetidor.
+     *
+     *  Por defecto **1**: dos lotes fue lo primero que se probó y el segundo de
+     *  latencia se nota al hablar. Con uno se conserva casi todo el beneficio
+     *  por la mitad de precio. */
+    var retrasoLotes: Int
+        get() = p.getInt("retraso_lotes", 1)
+        set(v) = p.edit().putInt("retraso_lotes", v.coerceIn(0, 2)).apply()
 
     /** Modo de Codec2 (índice de Codec2.NOMBRES). 1200 por defecto: es el
      *  punto dulce entre inteligibilidad y ocupación del canal. */
     var modo: Int
-        get() = p.getInt("modo", Codec2.C2_1200)
+        get() = p.getInt("modo", PorDefecto.MODO)
         set(v) = p.edit().putInt("modo", v).apply()
 
     /** Papel del nodo. Por defecto **automático**: hace de puente y de
@@ -122,7 +180,7 @@ class Prefs(ctx: Context) {
      *  defecto: si alguien lo había cambiado a mano a otra cosa, se le respeta. */
     var frecuenciaKHz: Int
         get() {
-            val v = p.getInt("frecKHz", 439600)
+            val v = p.getInt("frecKHz", PorDefecto.FREC_KHZ)
             if (v == 434400) { frecuenciaKHz = 439600; return 439600 }
             return v
         }
@@ -138,11 +196,11 @@ class Prefs(ctx: Context) {
      *  de alcance— a cambio del doble de tiempo en el aire, así que también son
      *  la mitad de sitio para repetidores. */
     var sf: Int
-        get() = p.getInt("sf", 8)
+        get() = p.getInt("sf", PorDefecto.SF)
         set(v) = p.edit().putInt("sf", v.coerceIn(6, 12)).apply()
 
     var anchoKHz: Int
-        get() = p.getInt("bwKHz", 250)
+        get() = p.getInt("bwKHz", PorDefecto.ANCHO_KHZ)
         set(v) = p.edit().putInt("bwKHz", v).apply()
 
     /** Canal lógico dentro de la misma frecuencia: separa grupos sin necesidad
@@ -173,6 +231,32 @@ class Prefs(ctx: Context) {
         get() = p.getString("enlace2", "") ?: ""
         set(v) = p.edit().putString("enlace2", v.trim()).apply()
 
+    /** GANANCIA DEL MICRÓFONO, índice de AudioEngine.MIC_GANANCIAS.
+     *
+     *  Por defecto 3 = 1,0 (sin tocar). Existe porque el micrófono de un móvil
+     *  suele entregar de sobra y **satura si hablas cerca**, y eso desde fuera
+     *  se oye como "el códec va mal": la voz llega rota y uno culpa al códec o
+     *  a la radio. Bajarla es lo que arregla la voz de quien habla pegado. */
+    var micGanancia: Int
+        get() = p.getInt("mic_ganancia", 3)
+        set(v) = p.edit().putInt("mic_ganancia", v.coerceIn(0, 6)).apply()
+
+    /** Micrófono CRUDO en vez del de comunicaciones.
+     *
+     *  `VOICE_COMMUNICATION` trae el procesado del sistema —cancelación de eco,
+     *  su propio control de ganancia— y en algunos móviles eso es justo lo que
+     *  satura. `MIC` entrega lo que oye la cápsula y deja el control aquí. */
+    var micCrudo: Boolean
+        get() = p.getBoolean("mic_crudo", false)
+        set(v) = p.edit().putBoolean("mic_crudo", v).apply()
+
+    /** Nivelador automático del micrófono. Encendido por defecto: sin él, unos
+     *  se oyen bien y a otros hay que adivinarlos. Se puede apagar para tener
+     *  el control entero con la ganancia de arriba. */
+    var micAgc: Boolean
+        get() = p.getBoolean("mic_agc", true)
+        set(v) = p.edit().putBoolean("mic_agc", v).apply()
+
     /** Ganancia de reproducción, índice de AudioEngine.GANANCIAS. */
     var ganancia: Int
         get() = p.getInt("ganancia", 1)
@@ -189,6 +273,13 @@ class Prefs(ctx: Context) {
         /** Frecuencias sugeridas, en kHz. Separadas 250 kHz para que no se
          *  pisen con BW de 250: dos canales mas juntos se estorbarian. */
         val CANALES = intArrayOf(434400, 434650, 434150, 433400)
+
+        /** Lo que se enseña en el selector de colchón. El orden ES el valor
+         *  de `retrasoLotes`: 0 directo, 1 medio, 2 largo. */
+        val COLCHONES = arrayOf(
+            "directo · sin colchón (0 ms)",
+            "medio · 1 lote (480 ms)  (por defecto)",
+            "largo · 2 lotes (960 ms)")
 
         val PERFILES = arrayOf(
             "Automático (recomendado)",

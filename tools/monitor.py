@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """monitor.py — puesto de escucha para las pruebas de campo.
 
-    ./venv/bin/python tools/monitor.py [--tcp 192.168.1.50] [--celda 14481]
+    ./venv/bin/python tools/monitor.py [--tcp 192.168.1.61] [--celda 14481]
 
 QUE HACE Y POR QUE
 ------------------
@@ -205,7 +205,7 @@ def main():
     def opt(n, c, d):
         return c(a[a.index(n) + 1]) if n in a else d
 
-    tcp = opt('--tcp', str, '192.168.1.50')
+    tcp = opt('--tcp', str, '192.168.1.61')
     puerto = opt('--puerto', str, '')
     celda = opt('--celda', int, 0)          # puerto local del tunel al relevo
     cada = opt('--celda-cada', float, 60.0)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # corresponsal.py — hace de segunda estación desde la raspi.
 #
-#   ./corresponsal.py [--puerto /dev/ttyACM0] [--indicativo EA1ABC] [--minutos 10]
+#   ./corresponsal.py [--puerto /dev/ttyACM0] [--indicativo C31AG] [--minutos 10]
 #
 # Escucha todo lo que llegue por radio y, cada vez que alguien termina de
 # hablar, reconstruye su audio en un .wav. Con `--decir <fichero.wav>` además
@@ -28,11 +28,7 @@ def main():
 
     puerto = opt('--puerto', str, '/dev/ttyACM0')
     bt = opt('--bt', str, '')
-    # ⚠️ `NOCALL` a proposito, igual que el firmware. Un indicativo de verdad
-    # por defecto haria que un desconocido que ejecute esto EMITA CON EL
-    # DISTINTIVO DE OTRO, que en el servicio de aficionados no es un descuido
-    # menor. Que falle o salga sin identificar es preferible a suplantar.
-    ind = opt('--indicativo', str, 'NOCALL')
+    ind = opt('--indicativo', str, 'C31AG')
     mins = opt('--minutos', float, 10.0)
     decir = opt('--decir', str, '')
     pot = opt('--potencia', int, 17)

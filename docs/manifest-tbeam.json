@@ -1,6 +1,6 @@
 {
   "name": "PTT LoRa (tbeam)",
-  "version": "1.37",
+  "version": "1.51",
   "new_install_prompt_erase": false,
   "builds": [
     {

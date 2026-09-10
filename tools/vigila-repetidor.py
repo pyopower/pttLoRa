@@ -16,7 +16,7 @@ distintas que conviene no confundir:
 
 Se cuelga del nodo de casa (por WiFi) y va dejando el resultado en el registro:
 
-    ./vigila-repetidor.py --tcp 192.168.1.50 --busco EA1ABC-9 [--prueba-cada 30]
+    ./vigila-repetidor.py --tcp 192.168.1.50 --busco C31AG-9 [--prueba-cada 30]
 
 Con `--aviso <fichero>` escribe además una línea de estado que puede leer
 cualquier otra cosa (una web, un bot, un cron).
@@ -47,7 +47,7 @@ def ahora():
 def main():
     a = sys.argv[1:]
     tcp = opt(a, "--tcp", str, "")
-    busco = opt(a, "--busco", str, "EA1ABC-9").upper()
+    busco = opt(a, "--busco", str, "C31AG-9").upper()
     cada = opt(a, "--prueba-cada", float, 30.0)      # minutos entre pruebas de eco
     mudo = opt(a, "--mudo", float, 25.0)             # minutos sin baliza = alarma
     fichero = opt(a, "--aviso", str, "")

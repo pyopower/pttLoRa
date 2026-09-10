@@ -63,6 +63,7 @@ class Nodo(private val onEvento: (Int, ByteArray) -> Unit,
         const val CMD_RED = 0x0F
         const val CMD_ENLACE = 0x10
         const val CMD_POS = 0x17
+        const val CMD_REINICIA = 0x18
         /** Origen de la posición: viva (la del móvil, caduca y no se guarda)
          *  o fija (la de una celda, se guarda en el nodo). */
         const val POS_VIVA = 0
@@ -274,10 +275,30 @@ class Nodo(private val onEvento: (Int, ByteArray) -> Unit,
             s.broadcast = true
             s.soTimeout = 400
             val pregunta = "PTTLORA?".toByteArray(Charsets.US_ASCII)
-            // A la difusión general y también a la del punto de acceso del
-            // propio nodo: algunas redes filtran 255.255.255.255 pero dejan
-            // pasar la de su subred.
-            for (destino in listOf("255.255.255.255", "192.168.4.255")) {
+            /* ⚠️ Y SOBRE TODO, A LA DIFUSIÓN DE LA RED EN LA QUE ESTAMOS.
+             *
+             * Aquí sólo iban la general (`255.255.255.255`) y la del punto de
+             * acceso del propio nodo (`192.168.4.x`). Faltaba la que hace falta
+             * en el caso normal —el nodo colgado del router de casa—, y **la
+             * general la filtran de largo tanto Android como muchos routers**:
+             * encontrar el nodo dependía de que ese broadcast colara. Medido el
+             * 10-sep-2026 en una LAN 192.168.1.x: por `192.168.1.255`
+             * contestaron los dos nodos, y era el único camino fiable.
+             *
+             * La dirección se saca del propio interfaz, no se compone a mano:
+             * suponer /24 falla en cuanto alguien tiene otra máscara. */
+            val destinos = LinkedHashSet<String>()
+            try {
+                for (ni in java.net.NetworkInterface.getNetworkInterfaces()) {
+                    if (!ni.isUp || ni.isLoopback) continue
+                    for (ia in ni.interfaceAddresses) {
+                        ia.broadcast?.hostAddress?.let { destinos.add(it) }
+                    }
+                }
+            } catch (e: Exception) { Log.w(TAG, "difusiones locales: ${e.message}") }
+            destinos.add("255.255.255.255")
+            destinos.add("192.168.4.255")      // el nodo en modo punto de acceso
+            for (destino in destinos) {
                 try {
                     s.send(java.net.DatagramPacket(
                         pregunta, pregunta.size,
@@ -524,6 +545,10 @@ class Nodo(private val onEvento: (Int, ByteArray) -> Unit,
 
     /** Que la olvide y deje de publicarla. */
     fun olvidaPosicion() = manda(CMD_POS, ByteArray(0))
+
+    /** Reiniciar el nodo. El nodo contesta y se reinicia 300 ms después, así
+     *  que se pierde el enlace a propósito: la app reconecta sola. */
+    fun reinicia() = manda(CMD_REINICIA, ByteArray(0))
 
     fun identifica(indicativo: String) {
         manda(CMD_IDENT,

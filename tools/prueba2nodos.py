@@ -36,8 +36,8 @@ def main():
     rx = Nodo(p_rx)
     time.sleep(2.5)                      # que arranquen del reset
 
-    tx.manda(CMD_CONFIG, bytes([1, 3, pot]) + b'NOCALL')
-    rx.manda(CMD_CONFIG, bytes([1, 3, pot]) + b'NOCALL-7')
+    tx.manda(CMD_CONFIG, bytes([1, 3, pot]) + b'C31AG')
+    rx.manda(CMD_CONFIG, bytes([1, 3, pot]) + b'C31AG-7')
     time.sleep(0.5)
 
     recibido = []

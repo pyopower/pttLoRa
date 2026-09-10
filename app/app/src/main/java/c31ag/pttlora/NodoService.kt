@@ -41,6 +41,68 @@ class NodoService : Service() {
     }
 
     /** Lo que la Activity necesita pintar. */
+    /** UNA TRANSMISION. **Las balizas no cuentan**: una baliza no es alguien
+     *  hablando, y mezclarlas tapa justo lo que se busca mirar en un QSO con
+     *  varios. Para las balizas está el registro.
+     *
+     *  Es una fila POR TRANSMISION y no por persona: lo que hace falta ver es
+     *  el ORDEN real de lo que ha pasado —quién entró detrás de quién y cuánto
+     *  duró cada uno—, y con una sola fila por indicativo eso se pierde en
+     *  cuanto alguien habla dos veces.
+     *
+     *  Y LAS PROPIAS TAMBIEN VAN DENTRO. Sin ellas la lista miente sobre el
+     *  orden: se ve a quién oíste, pero no cuándo entraste tú entre medias, que
+     *  es justo lo que hace falta para saber por dónde va la rueda. */
+    class Hablante(val indicativo: String, var cuando: Long, var porRf: Boolean,
+                   var rssi: Int, var segundos: Double = 0.0,
+                   var yo: Boolean = false)
+
+    /** Las últimas transmisiones, la más reciente primero. */
+    private val rueda = ArrayList<Hablante>()
+    /** Cuántas caben en la caja antes de que empiecen a caer por abajo. */
+    private val MAX_RUEDA = 20
+
+    fun ultimosHablantes(): List<Hablante> = synchronized(rueda) { ArrayList(rueda) }
+
+    /** La fila de la transmision que se esta oyendo AHORA, para poder
+     *  escribirle la duracion cuando acabe. */
+    private var filaEnCurso: Hablante? = null
+
+    private fun apuntaHablante(ind: String, rssi: Int) {
+        if (ind.isBlank()) return
+        val h = Hablante(ind, System.currentTimeMillis(), porRadio(rssi), rssi)
+        synchronized(rueda) {
+            rueda.add(0, h)
+            // Una caja que se va llenando; las mas viejas caen por abajo.
+            while (rueda.size > MAX_RUEDA) rueda.removeAt(rueda.size - 1)
+        }
+        filaEnCurso = h
+        observador?.onRueda()
+    }
+
+    /** Se acabo de oir a alguien: se le pone la duracion a su fila. */
+    private fun cierraFila(seg: Double, porRf: Boolean, rssi: Int) {
+        val h = filaEnCurso ?: return
+        filaEnCurso = null
+        synchronized(rueda) {
+            h.segundos = seg
+            h.porRf = porRf
+            if (rssi < 126) h.rssi = rssi
+        }
+        observador?.onRueda()
+    }
+
+    /** Y LO MIO TAMBIEN VA A LA LISTA. Ver la nota de `Hablante`. */
+    private fun apuntaLoMio(seg: Double, porRf: Boolean) {
+        val ind = prefs.indicativo.trim().ifBlank { "yo" }
+        synchronized(rueda) {
+            rueda.add(0, Hablante(ind, System.currentTimeMillis() - (seg * 1000).toLong(),
+                                  porRf, 127, seg, true))
+            while (rueda.size > MAX_RUEDA) rueda.removeAt(rueda.size - 1)
+        }
+        observador?.onRueda()
+    }
+
     interface Observador {
         /** El nodo pide el código que muestra en su pantalla. */
         fun onPideCodigo()
@@ -51,6 +113,8 @@ class NodoService : Service() {
         fun onPtt(estado: Int, quien: String?)
         fun onTx(transmitiendo: Boolean)
         fun onLog(texto: String)
+        /** Ha hablado alguien: hay que repintar la rueda. */
+        fun onRueda()
     }
 
     @Volatile var observador: Observador? = null
@@ -93,7 +157,20 @@ class NodoService : Service() {
     }
 
     /** ¿Vino por Internet en vez de por radio? Ver la nota de arriba. */
+    /* ── DE DONDE VIENE UNA TRAMA ──
+     * El `rssi` es una medida de radio salvo dos valores imposibles por el
+     * aire, que son marcas (ver protocolo.h):
+     *   127 = por el enlace de Internet
+     *   126 = eco local: otro cliente de MI MISMO nodo
+     * Separarlos importa: hablando con alguien colgado del mismo nodo, esto
+     * decia 🌐 y apuntaba la voz como «tapada por Internet» sin que hubiera
+     * Internet de por medio — y con esas cuentas es con lo que se juzga si la
+     * cobertura de radio esta bien. */
     private fun porInternet(rssi: Int) = rssi == 127
+    private fun mismoNodo(rssi: Int) = rssi == 126
+    /** ⚠️ Lo unico que cuenta como RADIO. Un `!porInternet()` a secas daria por
+     *  buena la marca de eco local y haria creer que la antena esta oyendo. */
+    private fun porRadio(rssi: Int) = rssi < 126
 
     /* ------------------------------------------------------------------
      *  ¿ESTÁ VIVA LA RADIO?
@@ -121,126 +198,213 @@ class NodoService : Service() {
         return t > 0L && System.currentTimeMillis() - t < RADIO_MUDA_MS
     }
 
-    /* ------------------------------------------------------------------
-     *  EL DUPLICADO QUE `vistos` NO PUEDE VER, Y EL ECO
+    /* ══════════════════ DOS CAMINOS, UNA SOLA VOZ ══════════════════
      *
-     *  `vistos` descarta por (origen, stream, secuencia), que es lo que hace el
-     *  firmware, y funciona mientras las dos copias vengan del MISMO nodo.
-     *  Con el camino de datos abierto no es el caso, y ese es el fallo de
-     *  fondo: **la misma voz entra en la red con dos `src` distintos**, porque
-     *  cada camino la sella con la identidad de SU nodo — el de radio con la
-     *  MAC de la placa, el de datos con el hash del indicativo. Para `vistos`
-     *  son dos transmisiones diferentes de dos estaciones diferentes.
+     * LA RADIO ES LA BASE Y INTERNET ES UN COMODIN. Eso no significa elegir un
+     * camino y despreciar el otro: significa que **la red tiene que funcionar
+     * sin Internet**, y que cuando lo hay sirve para unir celdas y para tapar
+     * lo que la radio no trajo. Ni un lote mas.
      *
-     *  De ahi salen las dos cosas que se oyeron el 8-sep-2026:
-     *    * **eco de uno mismo**: lo que sale por radio da la vuelta
-     *      (nodo → celda → reflector → nodo de datos) y vuelve a la app, con el
-     *      `src` de la celda. La app no lo reconoce como suyo y lo reproduce.
-     *    * **al otro se le oye dos veces**, una por camino y descolocadas.
+     * Hasta la 0.9.35 se arbitraba por COPIA ENTERA: se elegia la de radio y se
+     * tiraba la de Internet completa. Funcionaba, pero desperdiciaba justo lo
+     * que el comodin puede dar — si por radio llegan los lotes 1-4 y el 5 se
+     * pierde en una sombra, el 5 estaba en la otra copia y se tiraba con ella.
      *
-     *  Lo que SI es unico en las dos copias es QUIEN HABLA: el indicativo va en
-     *  el INICIO y lo pone el que habla (CMD_IDENT), no el nodo. Ahi es donde
-     *  se juntan las dos copias, y por ahi se elige.
+     * Ahora se compone lote a lote, y hay un hecho que lo hace facil: **las dos
+     * copias son la MISMA trama**. El reflector no re-sella nada, asi que el
+     * lote 5 por radio y el 5 por Internet llevan identicos `src`, `stream` y
+     * `seq`, y el audio Codec2 es el mismo. Juntarlos no es mezclar dos voces:
+     * es rellenar una ranura.
      *
-     *  ⚠️ Y SE ELIGE LA DE RADIO, SIEMPRE QUE HAYA. No la primera que llegue.
+     * ⚠️ EL PRECIO ES ESPERAR, y no hay forma de evitarlo: por Internet llega
+     * antes, asi que **no se puede saber que el lote 5 de radio va a faltar
+     * hasta que ya es tarde**. Por eso se reproduce con `RETRASO_LOTES` de
+     * retraso: un lote solo se da por perdido cuando ya han llegado dos
+     * posteriores. Dos lotes son ~960 ms, que ademas cubren el jitter del
+     * repetidor. Es latencia añadida a una voz que ya llevaba 0,6-1 s de
+     * agrupamiento — en un PTT se paga sin dolor.
      *
-     *  Esto fue un error de la 0.9.21 y merece quedar escrito: se dejo ganar a
-     *  la que llegase antes, y por Internet **siempre llega antes** —es un
-     *  atajo por fibra frente a un canal de 250 kHz con repeticion por medio—,
-     *  de modo que en la practica se escuchaba por Internet SIEMPRE y la radio
-     *  quedaba de adorno. Con eso el sistema parece funcionar justo cuando ha
-     *  dejado de funcionar: la cobertura de RF se cae y nadie se entera.
-     *
-     *  La regla es la del proyecto entero: **la base es la radio LoRa, e
-     *  Internet es un comodin para cuando la radio no llega**. En muchos sitios
-     *  y en muchos cacharros no habra mas que LoRa, y el sistema tiene que
-     *  estar pensado para ese caso, no para el otro.
-     *
-     *  Asi que por cada indicativo se llevan las DOS copias vivas y se
-     *  reproduce la de RF; la de Internet solo entra si no hay copia de radio,
-     *  o si la de radio se calla (CHARLA_MS) a mitad de transmision — que es
-     *  exactamente el comodin haciendo su trabajo, y ademas se ve en pantalla,
-     *  porque el origen de cada lote sale marcado 📻 o 🌐. */
-    private class Turno(var rf: String? = null, var net: String? = null,
-                        var tRf: Long = 0L, var tNet: Long = 0L,
-                        var elegida: String? = null)
+     * ⚠️ Y LA TRAMPA QUE ESTO PODRIA TRAER, que es la del 10-sep otra vez: si
+     * el audio se compone de los dos caminos, **se oye perfecto con la radio
+     * muerta y nadie se entera**. Por eso cada ranura recuerda si llego por la
+     * antena, y al cerrar la transmision se dice cuantos lotes fueron de radio
+     * y cuantos los tapo Internet. El audio se compone; la cuenta, no. */
+    private class Ranura(var datos: ByteArray, var porRf: Boolean, var rssi: Int)
 
-    /** Indicativo -> las dos copias que le estan llegando y cual se oye. */
-    private val turnos = HashMap<String, Turno>()
+    /** Lotes a la espera de que les llegue su turno, por numero de secuencia. */
+    private val ventana = HashMap<Int, Ranura>()
+    /** El seq que toca reproducir. El INICIO va con seq 0, la voz empieza en 1. */
+    private var vSiguiente = 1
+    /** El mayor seq recibido: con el se sabe cuando un hueco es definitivo. */
+    private var vMayor = 0
+    /** Cuando llego el ultimo lote, para poder cerrar si se pierde el FIN. */
+    @Volatile private var vUltimo = 0L
+    /** Cuando se vio el FIN, o 0 si no ha llegado. Ver el cierre por reloj. */
+    @Volatile private var finVisto = 0L
+    /** Margen que se le da a los rezagados de radio despues del FIN. Un lote
+     *  son 480 ms; con 400 ms se recoge al que venia por el aire sin alargar
+     *  la cola de forma perceptible. */
+    private val MARGEN_FIN = 400L
+    /** Lo pone el usuario en los ajustes; 0 = directo, sin colchón. Se lee en
+     *  cada transmisión y no se cachea: cambiarlo tiene efecto en la siguiente
+     *  sin reiniciar nada. */
+    private val retraso: Int get() = prefs.retrasoLotes
 
-    /** Stream (src+stream) -> de quien es. La voz y el fin NO llevan
-     *  indicativo, solo el INICIO, asi que hay que recordarlo. */
-    private val deQuien = object : LinkedHashMap<String, String>(16, 0.75f, false) {
-        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, String>?) = size > 64
+    /* Cuentas de la transmision que se esta oyendo. Separadas a proposito: la
+       primera dice cuanto se oyo, la segunda cuanto de eso lo trajo la RADIO. */
+    private var rxPorRf = 0
+    private var rxTapados = 0
+    private var rxLocal = 0
+    private var rxHuecos = 0
+    /** Ya se ha dicho en pantalla que esta entrando por la antena. */
+    private var rxAvisadoRf = false
+
+    /** El seq viaja en un byte y da la vuelta cada 256 lotes (~2 min de
+     *  cháchara). Se coloca cerca del que toca: hasta 55 por delante es futuro,
+     *  y mas que eso es un lote atrasado, no uno del año que viene. */
+    private fun seqAbsoluto(seq: Int): Int {
+        val d = ((seq - (vSiguiente and 0xFF)) + 256) % 256
+        return if (d > 200) vSiguiente - (256 - d) else vSiguiente + d
     }
 
-    /** Cuanto aguanta un camino callado antes de cederle el turno al otro. El
-     *  FIN se pierde como cualquier trama —esa cicatriz ya esta en el
-     *  firmware—, asi que no se puede depender de el: si el que iba ganando
-     *  deja de llegar, el otro tiene que poder tomar el relevo. Tres segundos
-     *  son seis lotes de 480 ms: de sobra para no confundir un hueco con una
-     *  caida, y poco para que un corte de radio no deje la frase entera muda. */
-    private val CHARLA_MS = 3000L
-
-    private fun clave(p: ByteArray) =
-        "%02x%02x%02x:%d".format(p[2], p[3], p[4], p[5].toInt() and 0xFF)
-
-    /** RF MANDA. Internet solo si no hay radio o si la radio se ha callado. */
-    private fun elige(t: Turno, ahora: Long) {
-        val rfVivo = t.rf != null && ahora - t.tRf < CHARLA_MS
-        t.elegida = if (rfVivo) t.rf else t.net
+    /** Empieza una transmision: la ventana se vacia, venga de donde venga. */
+    private fun abreVentana() {
+        synchronized(ventana) {
+            ventana.clear(); vSiguiente = 1; vMayor = 0; vUltimo = System.currentTimeMillis()
+        }
+        finVisto = 0L
+        rxPorRf = 0; rxTapados = 0; rxLocal = 0; rxHuecos = 0; rxAvisadoRf = false
     }
 
-    /** INICIO: apunta la copia y dice si es la que hay que reproducir. */
-    private fun aceptaInicio(k: String, quien: String, porRf: Boolean): Boolean {
-        /* YO NO. Mi voz vuelve por el otro camino con el `src` del nodo por el
-           que dio la vuelta, pero con MI indicativo: por eso esto ataja el eco
-           venga por donde venga. Sin mayusculas y sin espacios de sobra, que el
-           nodo lo puede haber recortado a MAX_INDICATIVO. */
-        if (quien.equals(prefs.indicativo.trim(), ignoreCase = true)) return false
-        synchronized(turnos) {
-            val ahora = System.currentTimeMillis()
-            deQuien[k] = quien
-            val t = turnos.getOrPut(quien) { Turno() }
-            if (porRf) { t.rf = k; t.tRf = ahora } else { t.net = k; t.tNet = ahora }
-            elige(t, ahora)
-            return t.elegida == k
+    /** Mete un lote en su ranura. **La copia de RADIO asciende a la que ya
+     *  hubiera**: llega mas tarde, pero es la que trae la medida de señal y la
+     *  que demuestra que la antena esta oyendo. Por eso el retraso de dos lotes
+     *  no es solo para rellenar huecos — tambien le da tiempo a la radio a
+     *  llegar antes de que se cuente la ranura. */
+    private fun encaja(p: ByteArray) {
+        val rssi = p[0].toInt()
+        val porRf = porRadio(rssi)
+        synchronized(ventana) {
+            val s = seqAbsoluto(p[6].toInt() and 0xFF)
+            if (s < vSiguiente) return          // tarde: su turno ya paso
+            if (s > vMayor) vMayor = s
+            vUltimo = System.currentTimeMillis()
+            val vieja = ventana[s]
+            if (vieja == null) {
+                ventana[s] = Ranura(p.copyOf(), porRf, rssi)
+            } else if (porRf && !vieja.porRf) {
+                vieja.datos = p.copyOf(); vieja.porRf = true; vieja.rssi = rssi
+            }
         }
     }
 
-    /** Un lote: refresca su camino, vuelve a elegir y dice si se reproduce. */
-    private fun aceptaLote(k: String): Boolean {
-        synchronized(turnos) {
-            /* Sin INICIO no se sabe de quien es, y entonces no se puede
-               comparar con nada: se reproduce. Perder voz por prudencia seria
-               peor que oir un lote de mas. */
-            val quien = deQuien[k] ?: return true
-            val t = turnos[quien] ?: return true
-            val ahora = System.currentTimeMillis()
-            if (k == t.rf) t.tRf = ahora else if (k == t.net) t.tNet = ahora
-            elige(t, ahora)
-            return t.elegida == k
+    /** Un solo hilo decodificando. `bombea` la llama el hilo que lee del nodo,
+     *  pero tambien el del latido cuando cierra por silencio una transmision a
+     *  la que se le perdio el FIN: dos hilos dentro del mismo decoder de
+     *  Codec2 —que es codigo nativo y no es reentrante— es un cuelgue esperando
+     *  a pasar. El orden de los cerrojos es siempre este y luego `ventana`. */
+    private val cerrojoRx = Any()
+
+    /** Suelta lo que ya se puede dar por completo. Con `forzar` vacia entera,
+     *  que es lo que toca en el FIN. */
+    private fun bombea(forzar: Boolean) = synchronized(cerrojoRx) {
+        while (true) {
+            var r: Ranura? = null
+            var hueco = false
+            synchronized(ventana) {
+                if (vSiguiente > vMayor) return
+                if (!forzar && vMayor < vSiguiente + retraso) return
+                r = ventana.remove(vSiguiente)
+                hueco = (r == null)
+                vSiguiente++
+            }
+            val lote = r
+            if (lote == null) {
+                /* Ni la radio ni Internet lo trajeron. No es lo mismo que un
+                   lote tapado por el comodin, y por eso se cuentan aparte. */
+                rxHuecos++
+                /* ⚠️ EN EL VACIADO FINAL NO SE TAPA NADA. Al llegar el FIN se
+                   suelta lo que quede, y los seq que nunca llegaron se cuentan
+                   como huecos — pero ahi no falta nada: **es que la
+                   transmision se ha acabado**. Rellenarlos metia medio segundo
+                   de arrastre al final de cada frase. */
+                if (hueco && !forzar) tapaHueco()
+            } else {
+                if (lote.porRf) {
+                    rxPorRf++
+                    if (lote.rssi < 126) {
+                        if (rxRssiMin >= 126 || lote.rssi < rxRssiMin) rxRssiMin = lote.rssi
+                        if (rxRssiMax >= 126 || lote.rssi > rxRssiMax) rxRssiMax = lote.rssi
+                    }
+                    /* El INICIO puede haber llegado por Internet —llega antes—
+                       y haber pintado 🌐 aunque la voz venga por la antena. En
+                       cuanto entra el primer lote de radio se corrige, que el
+                       icono es lo unico que dice si hay cobertura. */
+                    if (!rxAvisadoRf) {
+                        rxAvisadoRf = true
+                        rxQuien?.let { observador?.onQuienHabla(it, lote.rssi) }
+                    }
+                } else if (mismoNodo(lote.rssi)) {
+                    /* Otro cliente de mi propio nodo. Ni radio ni Internet:
+                       no dice nada de la cobertura y por eso va aparte. */
+                    rxLocal++
+                } else {
+                    rxTapados++
+                }
+                rxLotes++
+                reproduceLote(lote.datos)
+            }
         }
     }
 
-    /** FIN: solo cierra la reproduccion el de la copia que se estaba oyendo.
-     *  El de la otra cerraria el audio del bueno a mitad de frase. */
-    private fun aceptaFin(k: String): Boolean {
-        synchronized(turnos) {
-            val quien = deQuien[k] ?: return true
-            val t = turnos[quien] ?: return true
-            if (t.elegida != k) return false
-            turnos.remove(quien)      // se acabo: la siguiente empieza limpia
-            return true
+    /** La última trama que sonó, para poder tapar un hueco con ella. */
+    private var ultimoPcm: ShortArray? = null
+
+    /** UN LOTE QUE NO LLEGO NO PUEDE SONAR A CORTE SECO.
+     *
+     *  Dejar el hueco en silencio suena peor de lo que es: medio segundo de
+     *  nada en mitad de una palabra se oye como si el sistema fallara, y ademas
+     *  deja al altavoz sin datos, que es cuando aparecen los chasquidos. Lo que
+     *  hace cualquier codec de voz ante una perdida es continuar con lo ultimo
+     *  que tenia y desvanecerlo: no inventa voz, pero no rompe la frase. */
+    private fun tapaHueco() {
+        val ult = ultimoPcm ?: return
+        val a = audio ?: return
+        var g = 0.6f
+        /* ⚠️ CORTO. Un relleno largo no disimula: se oye.
+           Aqui se repetia la ultima trama `tramasPorLote` veces —480 ms a 40 ms
+           por trama—, y eso no suena a voz sino a un zumbido que se apaga y una
+           frase que se reanuda despues. Lo que hacen los codecs de voz es tapar
+           el borde, no el hueco entero: dos o tres tramas bastan para que no
+           haya chasquido, y el resto es mejor en silencio. */
+        for (i in 0 until PLC_TRAMAS) {
+            val copia = ShortArray(ult.size)
+            for (j in ult.indices) copia[j] = (ult[j] * g).toInt().toShort()
+            a.play(copia)
+            g *= 0.45f
         }
     }
+
+    /** Cuántas tramas se repiten para tapar el borde de un hueco. Tres a 40 ms
+     *  son 120 ms: quita el chasquido y no se nota como arrastre. */
+    private val PLC_TRAMAS = 3
+
+    /** ¿Es mi propia voz dando la vuelta? Mi transmision vuelve por el otro
+     *  camino con el `src` del nodo por el que paso, pero con MI indicativo:
+     *  por eso se ataja por quien habla y no por origen. Sin mayusculas y sin
+     *  espacios de sobra, que el nodo lo puede haber recortado a
+     *  MAX_INDICATIVO. */
+    private fun esMiVoz(quien: String) =
+        quien.equals(prefs.indicativo.trim(), ignoreCase = true)
 
     /** Como se enseña el origen de algo que ha llegado. Es la mitad de lo que
      *  el usuario quiere ver: no basta con oírlo, hay que saber **por dónde**
      *  vino — si empieza a entrar todo por Internet teniendo al otro cerca, es
      *  que la radio ha dejado de llegar, y ese aviso no existía. */
     private fun comoLlego(rssi: Int) =
-        if (porInternet(rssi)) "🌐 Internet" else "📻 RF $rssi dBm"
+        if (porInternet(rssi)) "🌐 Internet"
+        else if (mismoNodo(rssi)) "👥 mismo nodo"
+        else "📻 RF $rssi dBm"
     /** Quién tiene el micrófono en el nodo, si no somos nosotros. */
     @Volatile var pttDeOtro: String? = null; private set
     @Volatile private var conectando = false
@@ -346,7 +510,13 @@ class NodoService : Service() {
         Thread({
             var espera = 3000L
             while (true) {
-                try { Thread.sleep(2000) } catch (e: InterruptedException) { return@Thread }
+                /* 200 ms y no dos segundos: quien cierra una recepcion es
+                   este bucle (ver mas abajo), y con dos segundos de resolucion
+                   el margen de 400 ms tras el FIN se convertia en hasta dos
+                   segundos y medio de cola. Todo lo demas que hay aqui va por
+                   marca de tiempo, no por vueltas, asi que acelerarlo no cambia
+                   ninguna cadencia: solo afina el cierre. */
+                try { Thread.sleep(200) } catch (e: InterruptedException) { return@Thread }
                 val ahora = System.currentTimeMillis()
                 if (enlazado) {
                     espera = 3000L
@@ -370,6 +540,41 @@ class NodoService : Service() {
                        sigue oyendo a todo el mundo por el camino de datos y
                        parece que va bien, mientras lo que tú dices no lo oye
                        nadie. Es el aviso más importante que da esta app. */
+                    /* QUIEN CIERRA UNA RECEPCION ES EL RELOJ.
+                       Dos motivos para cerrar, y ninguno es "ha llegado el FIN":
+                        · con FIN: se espera `MARGEN_FIN` a los rezagados —por
+                          Internet el FIN adelanta a los ultimos lotes de radio,
+                          y esos lotes son voz que si no se pierde—;
+                        · sin FIN: el FIN se pierde como cualquier otra trama
+                          (esa cicatriz ya esta en el firmware, que cierra por
+                          silencio a los 5 s), asi que 2 s sin un lote tambien
+                          cierran. Dos segundos son cuatro lotes: no se confunde
+                          con un hueco de cobertura. */
+                    if (rxQuien != null) {
+                        val porFin = finVisto > 0L && ahora - finVisto > MARGEN_FIN
+                        val porSilencio = vUltimo > 0L && ahora - vUltimo > 2000
+                        if (porFin || porSilencio) {
+                            bombea(true)
+                            cierraRx()
+                        }
+                    }
+                    /* ⚠️ VIGIA DEL PTT TRABADO. Un micrófono que se cierra
+                       mal, o un enlace que se cae en mitad de la pulsación,
+                       podían dejar la transmisión abierta para siempre: el FIN
+                       sin mandar y el canal ocupado para toda la red. Que el
+                       cierre dependa de que algo haya salido bien no vale; esto
+                       es el suelo. Un segundo y medio es de sobra para una cola
+                       de 250 ms. */
+                    if (cerrando && tCerrando > 0L && ahora - tCerrando > 1500) {
+                        apunta("⚠️ el cierre no llegó: se fuerza")
+                        cierraTx()
+                    }
+
+                    /* El micro, listo ANTES de que se pulse. Ver
+                       `AudioEngine.preparaMicro`: montarlo dentro del PTT
+                       costaba las primeras palabras. */
+                    if (audio == null) preparaMicroYa()
+
                     val radio = hayRadio()
                     if (radio != radioAvisada) {
                         radioAvisada = radio
@@ -651,8 +856,22 @@ class NodoService : Service() {
                 pideCodigo = false
             }
             apunta(if (ok) "enlazado · $detalle" else "sin enlace · $detalle")
-            observador?.onEnlace(ok, detalle)
-            notifica(if (ok) "Enlazado con $detalle" else detalle)
+            /* ⚠️ EL ESTADO QUE SE PINTA ES EL DE LOS DOS CAMINOS, NO EL DE ESTE.
+               Aquí se anunciaba solo el resultado del enlace de RADIO, así que
+               con el nodo fuera de alcance cada reintento escribía «sin enlace»
+               aunque el camino de datos estuviera perfectamente en pie — y el
+               otro callback escribía «solo datos» un momento después. El
+               indicador iba y venía sin que nada cambiara de verdad, y desde
+               fuera parecía que el modo red entraba y salía solo.
+               Perder la radio NO es quedarse sin enlace mientras haya comodín:
+               eso es justo lo que el comodín viene a evitar. */
+            val hayAlgo = ok || datosEnlazado
+            observador?.onEnlace(hayAlgo,
+                if (ok) detalle
+                else if (datosEnlazado) "solo datos · $detalle"
+                else detalle)
+            notifica(if (ok) "Enlazado con $detalle"
+                     else if (datosEnlazado) "Solo datos" else detalle)
         }, this)
         n.onDiagnostico = { apunta("bluetooth: $it") }
         nodo = n
@@ -677,7 +896,9 @@ class NodoService : Service() {
             apunta(if (ok) "🌐 datos · $detalle" else "🌐 datos sin enlace · $detalle")
             if (ok) nodoDatos?.identifica(prefs.indicativo)
             observador?.onEnlace(enlazado || datosEnlazado,
-                                 if (enlazado) "radio" else "solo datos")
+                                 if (enlazado) "radio"
+                                 else if (ok) "solo datos"
+                                 else "sin enlace")
         }, this)
         nodoDatos = n
         n.conectaTcp(prefs.datosHost, prefs.datosPuerto)
@@ -711,8 +932,14 @@ class NodoService : Service() {
      *  (`modo=cliente(hay celda)` en el estado), asi que se puede decidir con
      *  ese dato; se deja para cuando haya una segunda celda y se pueda probar
      *  de verdad. */
+    /* POR DONDE HA SALIDO LO QUE ACABO DE DECIR. Se apunta al vuelo porque es
+     * lo unico que contesta la pregunta que de verdad importa al soltar el PTT:
+     * ¿me ha oido alguien por la antena, o he salido solo por el comodin? */
+    @Volatile private var txPorRf = false
+    @Volatile private var txPorNet = false
+
     private fun mandaPorTodos(tipo: Int, datos: ByteArray = ByteArray(0)) {
-        if (enlazado) nodo?.manda(tipo, datos)
+        if (enlazado) { nodo?.manda(tipo, datos); txPorRf = true }
         /* Y POR DATOS TAMBIÉN CUANDO LA RADIO NO LLEGA.
          *
          * Esto faltaba, y costó once segundos de voz al vacío. La regla es «por
@@ -725,7 +952,10 @@ class NodoService : Service() {
          * haber alguien cerca— y aquí es preferible duplicar que perder la
          * transmisión. Mientras la radio va bien, esto no se dispara y sigue
          * saliendo sólo por RF. */
-        if (prefs.datosActivo && !hayRadio()) nodoDatos?.manda(tipo, datos)
+        if (prefs.datosActivo && !hayRadio()) {
+            nodoDatos?.manda(tipo, datos)
+            txPorNet = true
+        }
     }
 
     /** Si hay a donde conectarse. Sin esto la reconexion daria vueltas en
@@ -744,6 +974,13 @@ class NodoService : Service() {
     }
 
     fun autoriza(codigo: String) { nodo?.autoriza(codigo) }
+
+    /** Reinicia el nodo enlazado. Tarda ~20 s en volver; la reconexión es
+     *  automática, así que no hay que hacer nada más. */
+    fun reiniciaNodo() {
+        apunta("reiniciando el nodo…")
+        nodo?.reinicia()
+    }
 
     /** Reenvía los ajustes de radio (frecuencia, canal y potencia).
      *  Aquí SÍ va el indicativo: se llega por «Guardar» en los ajustes, que es
@@ -800,7 +1037,7 @@ class NodoService : Service() {
            justamente la que se tire por repetida, y aun así demuestra que la
            antena está oyendo. */
         if (p.size >= 1 && (tipo == Nodo.EV_INICIO || tipo == Nodo.EV_VOZ ||
-                            tipo == Nodo.EV_HOLA) && !porInternet(p[0].toInt())) {
+                            tipo == Nodo.EV_HOLA) && porRadio(p[0].toInt())) {
             ultimoRf = System.currentTimeMillis()
         }
         when (tipo) {
@@ -814,13 +1051,14 @@ class NodoService : Service() {
             }
             Nodo.EV_INICIO -> if (p.size >= 8) {
                 val rssi = p[0].toInt()
-                /* DESCARTE DEL DUPLICADO. Con los dos caminos abiertos, lo
-                   mismo llega dos veces: gana el que llegue antes (casi
-                   siempre Internet, que es atajo) y el otro se tira. Clave:
-                   origen + stream, igual que hace el nodo. */
+                /* UN SOLO INICIO POR TRANSMISION, venga por donde venga. Las
+                   dos copias son la misma trama —mismo `src`, `stream` y
+                   `seq`—, asi que aqui el dedupe SI puede ser ciego al camino:
+                   lo que hay que evitar es reabrir la transmision, no elegir
+                   copia. Quien reparte radio e Internet es la ventana, lote a
+                   lote. */
                 if (!nuevo("I:%02x%02x%02x:%d".format(
                         p[2], p[3], p[4], p[5].toInt() and 0xFF))) return
-                val modo = p[6].toInt() and 0xFF
                 /* ⚠️ EL INDICATIVO SE CORTA EN EL PRIMER CERO. Desde el
                    firmware v1.35, detrás puede venir `\0` + 8 bytes con la
                    POSICIÓN de quien habla (la de una persona sale aquí, no en
@@ -830,62 +1068,50 @@ class NodoService : Service() {
                    reconocerse y volvería a oírse uno mismo. */
                 val bruto = String(p, 7, p.size - 7, Charsets.US_ASCII)
                 val ind = bruto.substringBefore('\u0000').trim()
-                /* Y AQUI EL SEGUNDO FILTRO, el que `vistos` no puede hacer: por
-                   QUIEN HABLA. Tira mi propio eco, y de las dos copias se
-                   queda con LA DE RADIO. Ver la nota larga de `Turno`. */
-                if (!aceptaInicio(clave(p), ind, !porInternet(rssi))) return
-                abreDecoder(modo)
-                ultimoQueHabla = ind
-                observador?.onQuienHabla(ind, rssi)
-                apunta("▼ %s · %s".format(ind, comoLlego(rssi)))
-                preparaAudioRx()
-                rxQuien = ind; rxLotes = 0; rxModo = modo; rxT0 = System.currentTimeMillis()
-                rxRssiMin = rssi; rxRssiMax = rssi
+                if (esMiVoz(ind)) return          // mi propio eco
+                abreVentana()
+                reproduce(tipo, p)
             }
             Nodo.EV_VOZ -> if (p.size > 9) {
-                /* El duplicado se tira ANTES de decodificar: pasarlo dos veces
-                   por el códec no solo gasta, es que **se oiría dos veces**.
-                   Clave con la secuencia, que es lo que distingue un lote de
-                   otro dentro de la misma transmisión. */
-                if (!nuevo("V:%02x%02x%02x:%d:%d".format(
-                        p[2], p[3], p[4], p[5].toInt() and 0xFF,
-                        p[6].toInt() and 0xFF))) return
-                if (!aceptaLote(clave(p))) return
-                val r = p[0].toInt()
-                if (rxQuien != null) {
-                    rxLotes++
-                    // 127 no es una medida: es la marca de que no vino por la
-                    // antena (otro cliente del mismo nodo, o el enlace).
-                    if (r != 127) {
-                        if (rxRssiMin == 127 || r < rxRssiMin) rxRssiMin = r
-                        if (rxRssiMax == 127 || r > rxRssiMax) rxRssiMax = r
-                    }
-                }
-                reproduceLote(p)
+                /* Aqui NO se descarta por duplicado: las dos copias del mismo
+                   lote hacen falta, porque de las dos sale una sola ranura y la
+                   de radio asciende a la de Internet. Ver `encaja`. */
+                /* Sin INICIO no se abre nada. El INICIO llega por los DOS
+                   caminos, asi que perderlo entero es raro; y abrir a ciegas
+                   costaria el filtro del eco —que compara el indicativo, y el
+                   indicativo solo viaja en el INICIO—, o sea oirse uno mismo. */
+                if (rxQuien == null) return
+                encaja(p)
+                bombea(false)
             }
             Nodo.EV_FIN -> {
-                /* El FIN de la copia que NO se esta oyendo se tira: si no,
-                   cerraria la reproduccion de la buena a mitad de frase. */
-                if (p.size >= 4 && !aceptaFin("%02x%02x%02x:%d".format(
+                /* ⚠️ EL FIN NO CIERRA LA RECEPCION, SOLO ANOTA QUE NO HABRA MAS.
+                   Vaciar aqui mismo se comia el final de cada frase, y por una
+                   razon de fondo: **el FIN viaja por los dos caminos y por
+                   Internet llega ANTES que los ultimos lotes de radio**. Al
+                   vaciar de golpe, esos lotes llegaban cuando su turno ya habia
+                   pasado y se tiraban. El cierre lo manda el reloj, no el FIN:
+                   se le da un margen a los rezagados y luego se cierra. */
+                if (p.size >= 4 && !nuevo("F:%02x%02x%02x:%d".format(
                         p[0], p[1], p[2], p[3].toInt() and 0xFF))) return
-                audio?.resetPlayback()
-                rxQuien?.let { q ->
-                    val seg = (System.currentTimeMillis() - rxT0) / 1000.0
-                    val señal = if (rxRssiMin == 127) "por red"
-                                else if (rxRssiMin == rxRssiMax) "${rxRssiMax} dBm"
-                                else "${rxRssiMax}..${rxRssiMin} dBm"
-                    apunta("◀ $q · $rxLotes lotes · %.1f s · $señal · ${Codec2.NOMBRES.getOrElse(rxModo) { "?" }}".format(seg))
-                }
-                rxQuien = null
+                if (rxQuien == null) return
+                finVisto = System.currentTimeMillis()
+                bombea(false)      // lo que ya se pueda dar por completo, ya
             }
             Nodo.EV_HOLA -> if (p.size >= 9) {
-                /* UNA BALIZA, UNA LÍNEA. Llegan hasta tres copias de la misma:
-                   la de la antena y una por cada nodo que la haya metido en el
-                   reflector. El registro se hacía ilegible.
-                   La ventana de 8 s las junta sin tocar las de verdad, que van
-                   cada minuto — y **la de RF llega antes** que la que ha dado
-                   la vuelta por Internet, así que la que se queda es la buena y
-                   el dBm que se ve es real. */
+                /* ⚠️ UNA BALIZA SOLO SIGNIFICA ALGO POR RADIO, y por eso la que
+                   viene por Internet **no se enseña**.
+                   Una baliza dice "estoy aqui y me oyes": por la linea eso no
+                   demuestra ni un dB, y la lista de nodos a la vista es
+                   justamente la de quien te oye. Enseñarlas mezcladas convierte
+                   la unica herramienta que hay para juzgar la cobertura en un
+                   listado de quien tiene Internet. El firmware v1.40 ya no las
+                   entrega, pero por el camino de datos (4460) siguen llegando y
+                   ademas hay que cubrir los nodos sin actualizar. */
+                if (!porRadio(p[0].toInt())) return
+                /* UNA BALIZA, UNA LÍNEA. Aun por radio llegan repetida y
+                   original; la ventana de 8 s las junta sin tocar las de
+                   verdad, que van cada minuto. */
                 if (!nuevo("H:%02x%02x%02x".format(p[2], p[3], p[4]))) return
                 /* [rssi][snr][src×3][stream][flags][batería][indicativo]\0[nombre]
                    Estaba desplazado un byte y el indicativo salía con el byte
@@ -916,9 +1142,7 @@ class NodoService : Service() {
                    asusta sin motivo. */
                 val bat = p[7].toInt() and 0xFF
                 val pila = if (bat > 0) " · batería $bat%" else ""
-                val via = if (porInternet(p[0].toInt())) "🌐 Internet"
-                          else "📻 ${p[0].toInt()} dBm"
-                apunta("baliza $quien · $papel$pila · $via")
+                apunta("baliza $quien · $papel$pila · 📻 ${p[0].toInt()} dBm")
                 observador?.onLog("baliza de $quien (${p[0].toInt()} dBm)")
             }
             /* Con varios usuarios en el mismo nodo, el micrófono es de uno.
@@ -986,6 +1210,37 @@ class NodoService : Service() {
     /** El motor de audio se dimensiona con la trama del codec que toque, y el
      *  modo lo decide QUIEN HABLA, no nosotros: puede cambiar entre una
      *  transmision y la siguiente. */
+    /** Deja el códec y el micro montados por adelantado, para que la
+     *  pulsación no tenga que esperar a nada. */
+    /** Vuelca los ajustes del micrófono al motor. Se llama antes de cada
+     *  pulsación: así un cambio en Ajustes tiene efecto en la siguiente sin
+     *  reiniciar nada, que es lo que hace falta para poder ajustar la ganancia
+     *  probando y escuchando. */
+    private fun aplicaMicro() {
+        val a = audio ?: return
+        a.micGain = AudioEngine.MIC_GANANCIAS.getOrElse(prefs.micGanancia) { 1.0f }
+        a.agc = prefs.micAgc
+        // La fuente sólo se puede cambiar al abrir el micro, no en caliente.
+        if (a.micCrudo != prefs.micCrudo) {
+            a.micCrudo = prefs.micCrudo
+            a.sueltaMicro()          // se reabrirá con la fuente nueva
+        }
+    }
+
+    private fun preparaMicroYa() {
+        val modo = prefs.modo
+        if (encoder?.modo != modo) {
+            encoder?.cierra()
+            encoder = Codec2.abre(modo)
+        }
+        val e = encoder ?: return
+        if (audio == null || audio?.FRAME != e.muestrasPorTrama) {
+            audio?.release()
+            audio = AudioEngine(this, e.muestrasPorTrama, ::tramaCapturada)
+        }
+        audio?.preparaMicro()
+    }
+
     private fun preparaAudioRx() {
         val d = decoder ?: return
         if (audio == null || audio?.FRAME != d.muestrasPorTrama) {
@@ -1003,6 +1258,71 @@ class NodoService : Service() {
     }
 
     /** EV_VOZ = [rssi][snr][src×3][stream][seq][modo][n][datos] */
+    /* ─────────────── ABRIR Y CERRAR LA RECEPCION ───────────────
+     * Los lotes no pasan por aqui: van a la ventana y salen por `bombea`. */
+    private fun reproduce(tipo: Int, p: ByteArray) {
+        when (tipo) {
+            Nodo.EV_INICIO -> {
+                val rssi = p[0].toInt()
+                val modo = p[6].toInt() and 0xFF
+                val bruto = String(p, 7, p.size - 7, Charsets.US_ASCII)
+                val ind = bruto.substringBefore('\u0000').trim()
+                abreDecoder(modo)
+                ultimoQueHabla = ind
+                apuntaHablante(ind, rssi)
+                observador?.onQuienHabla(ind, rssi)
+                apunta("▼ %s · %s".format(ind, comoLlego(rssi)))
+                /* Empieza otro: lo que quedara de la transmision anterior sobra
+                   —si alguien pisa, se oye al que entra, no una mezcla—. Y este
+                   es el sitio, no el cierre: ver la nota de `cierraRx`. */
+                audio?.resetPlayback()
+                preparaAudioRx()
+                rxQuien = ind; rxLotes = 0; rxModo = modo; rxT0 = System.currentTimeMillis()
+                rxRssiMin = rssi; rxRssiMax = rssi
+            }
+            Nodo.EV_FIN -> cierraRx()
+        }
+    }
+
+    /** Cierra la recepcion y deja escrito de que vivio esta transmision.
+     *
+     *  ⚠️ ESTA LINEA ES LA MITAD DEL ARREGLO. Si el audio se compone de los dos
+     *  caminos, se oye igual de bien con la radio muerta — y entonces nadie se
+     *  entera de que la cobertura se ha caido, que es como empezo todo el
+     *  10-sep. El audio se compone; la cuenta, NO: aqui se dice cuantos lotes
+     *  trajo la antena y cuantos los tapo Internet. */
+    private fun cierraRx() = synchronized(cerrojoRx) {
+        /* ⚠️ AQUI NO SE VACIA LA COLA DEL ALTAVOZ. Estaba, y se comia el final
+           de cada frase: al llegar el FIN, `bombea(true)` acaba de soltar los
+           ultimos dos o tres lotes —los que la ventana tenia retenidos— y
+           borrarlos justo despues los tira sin sonar. Antes no se notaba
+           porque sin ventana cada lote ya habia sonado al llegar.
+           Vaciar la cola tiene sentido al ABRIR una recepcion nueva, para que
+           no se mezcle con la anterior, y ahi es donde esta ahora. */
+        rxQuien?.let { q ->
+            val seg = (System.currentTimeMillis() - rxT0) / 1000.0
+            val señal = if (rxLocal > 0 && rxPorRf == 0) "sin salir del nodo"
+                        else if (rxRssiMin >= 126 || rxPorRf == 0) "sin radio"
+                        else if (rxRssiMin == rxRssiMax) "${rxRssiMax} dBm"
+                        else "${rxRssiMax}..${rxRssiMin} dBm"
+            val tapados = if (rxTapados > 0) " · 🌐 $rxTapados tapados" else ""
+            val local = if (rxLocal > 0) " · 👥 $rxLocal del nodo" else ""
+            val huecos = if (rxHuecos > 0) " · $rxHuecos perdidos" else ""
+            /* Con todo del mismo nodo, hablar de radio no tiene sentido: no ha
+               salido al aire, así que no se anuncia una cobertura que no se ha
+               puesto a prueba. */
+            val cuenta = if (rxLocal > 0 && rxPorRf == 0 && rxTapados == 0)
+                             "👥 $rxLocal del nodo$huecos"
+                         else "📻 $rxPorRf$tapados$local$huecos"
+            apunta(("◀ $q · $rxLotes lotes ($cuenta) · %.1f s · " +
+                    "$señal · ${Codec2.NOMBRES.getOrElse(rxModo) { "?" }}").format(seg))
+            cierraFila(seg, rxPorRf > 0, rxRssiMin)
+        }
+        rxQuien = null
+        finVisto = 0L
+        synchronized(ventana) { ventana.clear(); vSiguiente = 1; vMayor = 0 }
+    }
+
     private fun reproduceLote(p: ByteArray) {
         val modo = p[7].toInt() and 0xFF
         val n = p[8].toInt() and 0xFF
@@ -1016,6 +1336,7 @@ class NodoService : Service() {
         while (i < n && off + bits <= p.size) {
             d.descodifica(p, off, pcm, 0)
             a.play(pcm.copyOf())
+            ultimoPcm = pcm.copyOf()      // por si el siguiente lote no llega
             off += bits
             i++
         }
@@ -1064,35 +1385,97 @@ class NodoService : Service() {
         }
         lote = ByteArray(e.bytesPorTrama * e.tramasPorLote)
         loteTramas = 0
+        /* ⚠️ PRIMERO EL MICRO Y LUEGO EL INICIO, no al revés.
+           Estaba puesto `transmitiendo = true` y el INICIO ANTES de abrir la
+           captura: si el micro no arrancaba, la red se quedaba con una
+           transmisión abierta que no iba a llevar ni una trama de voz, y el
+           canal ocupado para todos. Si no hay micro no hay nada que transmitir,
+           así que no se abre nada. */
+        aplicaMicro()
+        audio?.reiniciaRecorte()
+        if (audio?.startCapture() != true) {
+            observador?.onLog("no se pudo abrir el micrófono")
+            apunta("⚠️ el micrófono no abre: no se transmite")
+            return
+        }
         transmitiendo = true
         t0Tx = System.currentTimeMillis()
+        txPorRf = false; txPorNet = false
         mandaPorTodos(Nodo.CMD_INICIO, byteArrayOf(modo.toByte()))
-        audio?.startCapture()
         Vibra.buzz(this, 30)
         observador?.onTx(true)
         notifica("Transmitiendo")
     }
 
+    /** Cuanto se sigue leyendo el micro despues de soltar. No es grabar de
+     *  mas: es terminar de leer lo que YA se habia grabado y estaba en el
+     *  buffer. Ver `AudioEngine.stopCapture`. */
+    private val COLA_PTT_MS = 250
+
+    /** Cuando se pidio el cierre, para poder forzarlo si no llega. */
+    @Volatile private var tCerrando = 0L
+
     fun sueltaPtt() {
         if (!transmitiendo) return
         transmitiendo = false
-        audio?.stopCapture()
-        // Lo que quede a medias se manda igual: cortar una sílaba por no
-        // completar el lote se nota más que medio lote corto.
-        if (loteTramas > 0) mandaLote()
-        mandaPorTodos(Nodo.CMD_FIN)
-        apunta("▶ tú · %.1f s · %s".format((System.currentTimeMillis() - t0Tx) / 1000.0,
-                                           Codec2.NOMBRES.getOrElse(prefs.modo) { "?" }))
+        cerrando = true                    // las tramas de la cola aun cuentan
+        tCerrando = System.currentTimeMillis()
+        audio?.stopCapture(COLA_PTT_MS) { cierraTx() }
         observador?.onTx(false)
         notifica(if (enlazado) "Enlazado"
                  else if (datosEnlazado) "Solo datos"
                  else "Sin enlace")
     }
 
+    /** El cierre de verdad, ya con la cola del micro vaciada. Lo llama el hilo
+     *  de captura, no quien suelta el PTT: asi nadie espera. */
+    private fun cierraTx() {
+        if (!cerrando) return              // ya se cerro (o lo forzo el vigia)
+        cerrando = false
+        tCerrando = 0L
+        // Lo que quede a medias se manda igual: cortar una sílaba por no
+        // completar el lote se nota más que medio lote corto.
+        if (loteTramas > 0) mandaLote()
+        mandaPorTodos(Nodo.CMD_FIN)
+        /* ⚠️ Y AQUI SE DICE POR DONDE HA SALIDO.
+           El aviso de «SIN RADIO» se escribe solo cuando CAMBIA el estado —para
+           no llenar el registro—, asi que a los cinco minutos de perder la
+           cobertura ya no hay nada en pantalla que lo recuerde y cada
+           transmision parece normal. Esa es exactamente la ceguera que costo
+           once segundos de voz al vacio el 9-sep. En recepcion ya se ve
+           (`📻 22 · 🌐 2 tapados`); en transmision faltaba, y es donde mas
+           importa: en recepcion te enteras de que no oyes, pero que no te oigan
+           no lo notas nunca. */
+        val via = when {
+            txPorRf && txPorNet -> "📻+🌐 sin radio: también por Internet"
+            txPorNet -> "🌐 sólo Internet"
+            txPorRf -> "📻 radio"
+            else -> "⚠️ por ningún sitio"
+        }
+        val seg = (System.currentTimeMillis() - t0Tx) / 1000.0
+        apunta("▶ tú · %.1f s · %s · %s".format(
+                   seg, Codec2.NOMBRES.getOrElse(prefs.modo) { "?" }, via))
+        /* ⚠️ Y SI EL MICRO HA SATURADO, SE DICE. Es la diferencia entre "el
+           códec suena mal" y "te estás comiendo el micro", que desde fuera se
+           oyen igual — y hasta ahora no había forma de distinguirlas: uno
+           acababa culpando al códec, a la radio o al colchón. */
+        val rec = audio?.porcentajeRecorte() ?: 0.0
+        if (rec >= 0.5) {
+            apunta("⚠️ micrófono SATURANDO (%.1f%% recortado): sepárate un palmo "
+                   .format(rec) + "o baja la ganancia en Ajustes → Micrófono")
+            observador?.onLog("micrófono saturando (%.1f%%)".format(rec))
+        }
+        apuntaLoMio(seg, txPorRf)
+    }
+
+    /** true mientras se vacia la cola del micro tras soltar: la transmision
+     *  ya no acepta PTT, pero esas tramas son voz de verdad y van dentro. */
+    @Volatile private var cerrando = false
+
     private fun tramaCapturada(pcm: ShortArray) {
         val e = encoder ?: return
-        if (!transmitiendo) return
-        if (System.currentTimeMillis() - t0Tx > TOT_S * 1000L) {
+        if (!transmitiendo && !cerrando) return
+        if (transmitiendo && System.currentTimeMillis() - t0Tx > TOT_S * 1000L) {
             observador?.onLog("corte por tiempo (${TOT_S}s)")
             sueltaPtt()
             return
@@ -1139,7 +1522,13 @@ class NodoService : Service() {
                ficheros**, y el usuario no tiene forma de distinguir si esto esta
                en el aire o su movil esta mandando fotos a algun sitio. Un
                altavoz dice lo que esto es. */
-            .setSmallIcon(android.R.drawable.stat_sys_speakerphone)
+            /* ⚠️ ICONO PROPIO, y hace falta. Estaba puesto
+               `stat_sys_speakerphone`, que es el icono DEL SISTEMA para el
+               altavoz del telefono: en la barra de estado se confundia con una
+               llamada en curso. Este es el CHIRP de LoRa —la rampa de
+               frecuencia que la radio emite de verdad— y no se parece a nada
+               que lleve un movil. */
+            .setSmallIcon(R.drawable.ic_stat_lora)
             .setOngoing(true)
             .setContentIntent(pi)
             .build()

@@ -58,7 +58,8 @@
 
     <application
         android:label="PTT LoRa"
-        android:icon="@android:drawable/stat_sys_upload"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/TemaPTT"
         android:allowBackup="false"
         android:hardwareAccelerated="true"
         android:vmSafeMode="true">

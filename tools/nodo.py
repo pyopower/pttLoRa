@@ -2,13 +2,13 @@
 # nodo.py — habla con un nodo de PTT LoRa por USB (tramas KISS).
 #
 #   ./nodo.py --puerto /dev/ttyACM0 estado
-#   ./nodo.py --ble AA:BB:CC:DD:EE:FF estado     (lo mismo por Bluetooth BLE)
-#   ./nodo.py --bt AA:BB:CC:DD:EE:FF estado      (SPP, solo firmware <= 1.25)
+#   ./nodo.py --ble AA:BB:CC:11:22:33 estado     (lo mismo por Bluetooth BLE)
+#   ./nodo.py --bt AA:BB:CC:11:22:33 estado      (SPP, solo firmware <= 1.25)
 #   ./nodo.py --tcp 192.168.4.1 estado           (lo mismo por WiFi, puerto 4460)
 #   ./nodo.py --tcp 192.168.4.1 --ident EA3ABC hablar voz.wav
 #       El nodo admite VARIOS clientes por WiFi a la vez y cada uno emite con
 #       SU indicativo: eso es lo que hace --ident.
-#   ./nodo.py config EA1ABC --canal 1 --saltos 3 [--potencia 17] [--perfil 0|1|2]
+#   ./nodo.py config C31AG --canal 1 --saltos 3 [--potencia 17] [--perfil 0|1|2]
 #                          perfil: 0=auto  1=repetidor fijo  2=solo mi radio
 #   ./nodo.py escuchar [segundos]
 #   ./nodo.py hablar <fichero.wav|-> [--modo 1200]      manda voz de verdad

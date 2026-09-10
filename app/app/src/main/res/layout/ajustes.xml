@@ -31,6 +31,14 @@
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="Códec" />
 
+    <Button android:id="@+id/micro"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Micrófono" />
+
+    <Button android:id="@+id/colchon"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Colchón de audio" />
+
     <Button android:id="@+id/perfil"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="Papel del nodo" />
@@ -59,7 +67,19 @@
 
     <Button android:id="@+id/posicion"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Posición" />
+        android:text="Posición y APRS" />
+
+    <Button android:id="@+id/tema"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Aspecto" />
+
+    <Button android:id="@+id/nombres"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Nombres de los operadores" />
+
+    <Button android:id="@+id/reiniciar"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Reiniciar el nodo" />
 
     <Button android:id="@+id/firmware"
         android:layout_width="match_parent" android:layout_height="wrap_content"

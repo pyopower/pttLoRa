@@ -241,6 +241,39 @@ class Puente:
                     self.clientes.remove(c)
                     self.quien.pop(c, None)
 
+    def _echa_fantasmas(self, sock, ind):
+        """Cierra las conexiones VIEJAS del mismo indicativo.
+
+        ⚠️ UN MOVIL NO PUEDE TENER TRES CONEXIONES, y las tenia: cuando cambia
+        de red o se rompe el tunel, el socket viejo NO se cierra —TCP no se
+        entera de que al otro lado ya no hay nadie— y aqui se seguia dando por
+        vivo. Visto el 10-sep-2026: `dentro (3 en total)` con un solo movil.
+
+        Y no es solo contabilidad. El reparto local excluia unicamente el socket
+        por el que se hablaba, asi que **a tus propios fantasmas se les mandaba
+        tu voz**; si alguno seguia llegando al aparato, te oias a ti mismo. Es
+        el mismo fallo que el relevo de mando tenia por la mañana, en otro
+        sitio: identificarse tiene que echar al de antes.
+
+        Quien quiera dos aparatos a la vez tiene los SSID (`C31AG-2`), que para
+        eso estan: con indicativo distinto, ninguno echa al otro."""
+        if not ind.strip():
+            return
+        fuera = []
+        with self.cerrojo:
+            for c in list(self.clientes):
+                if c is not sock and self.quien.get(c, '').upper() == ind.strip().upper():
+                    fuera.append(c)
+                    self.clientes.remove(c)
+                    self.quien.pop(c, None)
+        for c in fuera:
+            print('[cliente] fantasma de %s: se cierra la conexion vieja' % ind,
+                  flush=True)
+            try:
+                c.close()
+            except Exception:
+                pass
+
     # -------------------------------------------------------- un cliente --
     def atiende(self, sock, direccion):
         with self.cerrojo:
@@ -263,28 +296,33 @@ class Puente:
                         with self.cerrojo:
                             self.quien[sock] = ind.strip()
                         print('[cliente] %s es %s' % (direccion[0], ind), flush=True)
+                        self._echa_fantasmas(sock, ind)
                     elif tipo == CMD_INICIO and carga:
                         stream = (stream + 1) & 0xFF
                         seq = 0
+                        # El indicativo se cierra con un CERO, igual que en
+                        # el firmware (v1.42): un byte que impide que nada se
+                        # lea pegado detras. Ver la nota de CMD_INICIO en
+                        # main.cpp — `C31AG` llego a la red como `C31AGG`.
                         t = cabecera(T_INICIO, src, stream, 0, self.canal) + \
-                            bytes([carga[0]]) + ind.encode('ascii', 'ignore')
+                            bytes([carga[0]]) + ind.encode('ascii', 'ignore') + b'\0'
                         self.manda_al_aire(t)
                         self._a_todos(enmarcar(EV_INICIO,
                             bytes([RSSI_INTERNET, 0]) + t[3:6] + bytes([stream]) +
-                            t[CAB_LEN:]), salvo=sock)
+                            t[CAB_LEN:]), salvo=sock, no_para=ind)
                     elif tipo == CMD_VOZ and len(carga) >= 2:
                         seq = (seq + 1) & 0xFF
                         t = cabecera(T_VOZ, src, stream, seq, self.canal) + carga
                         self.manda_al_aire(t)
                         self._a_todos(enmarcar(EV_VOZ,
                             bytes([RSSI_INTERNET, 0]) + t[3:6] + bytes([stream, seq]) +
-                            carga), salvo=sock)
+                            carga), salvo=sock, no_para=ind)
                     elif tipo == CMD_FIN:
                         seq = (seq + 1) & 0xFF
                         t = cabecera(T_FIN, src, stream, seq, self.canal)
                         self.manda_al_aire(t)
                         self._a_todos(enmarcar(EV_FIN,
-                            t[3:6] + bytes([stream])), salvo=sock)
+                            t[3:6] + bytes([stream])), salvo=sock, no_para=ind)
                     elif tipo == CMD_ESTADO:
                         txt = ('v-datos %s perfil=nodo-de-datos canal=%d '
                                'enlace=%s clientes=%d ptt=libre'

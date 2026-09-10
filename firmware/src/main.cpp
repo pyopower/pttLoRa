@@ -558,6 +558,9 @@ static String   wifi_ssid2, wifi_clave2;
 static uint8_t  wifi_cual = 0;        // cual se esta probando: 0 o 1
 static uint32_t wifi_probando = 0;    // desde cuando
 static bool     wifi_activo = false, ota_lista = false;
+/* Aqui y no junto a los servidores: `CMD_WIFI` la baja para que se vuelvan a
+   levantar cuando el nodo coja IP en la red nueva. */
+static bool     servidores_en_pie = false;
 /* Modo de red del nodo. RED_OFF por defecto: la radio de 2,4 GHz apagada es
    ~80 mA menos y una superficie de ataque menos en un aparato que por lo demas
    no necesita red para nada. */
@@ -596,6 +599,19 @@ static volatile bool hay_paquete = false;
 static uint8_t  tx_stream = 0, tx_seq = 0;
 static bool     transmitiendo = false;
 static uint32_t t_ultimo_rx = 0, t_ultima_hola = 0;
+/* ⚠️ EL CANAL SE OCUPA CON LA VOZ, NO CON CUALQUIER COSA.
+ *
+ * Iba con `t_ultimo_rx`, que se pone con TODO lo que entra por la antena — y
+ * eso incluye las balizas. Una baliza dura unos 40 ms en el aire, pero dejaba
+ * el canal marcado como ocupado **1,5 segundos**, con el PTT bloqueado por una
+ * trama que ya habia terminado. Con tres nodos balizando y sus repeticiones,
+ * eso son bastantes ventanas muertas al minuto — el usuario lo noto como "las
+ * balizas no me dejan transmitir", y tenia razon.
+ *
+ * El guarda de 1,5 s existe POR LA VOZ: entre lote y lote hay huecos de 480 ms
+ * y declarar el canal libre a mitad de una transmision seria pisarla. Una
+ * baliza no es alguien hablando: cuando la recibes, ya se acabo. */
+static uint32_t t_ultima_voz = 0;
 /* Cuanto se espera hasta la PROXIMA baliza. Variable y no constante porque
    lleva el jitter dentro: ver `manda_hola()` y, sobre todo, la cicatriz de
    abajo sobre por que el jitter NO puede ir sumado a `t_ultima_hola`. */
@@ -603,6 +619,10 @@ static uint32_t hola_espera = HOLA_MS;
 static bool     canal_ocupado = false;
 static bool     hay_anfitrion = false;
 static uint32_t n_rx = 0, n_tx = 0, n_repetidas = 0, n_dup = 0, n_malas = 0;
+/* Lo que entro por el ENLACE de Internet, aparte de `n_rx`, que desde la v1.39
+   cuenta SOLO lo que entro por la antena. Separarlos es lo que permite ver de
+   un vistazo si un nodo esta viviendo de la radio o del comodin. */
+static uint32_t n_net = 0;
 static uint32_t n_calladas = 0;      // repeticiones que NO hizo falta hacer
 static char     ultimo_ind[MAX_INDICATIVO + 1] = "";
 static int      ultimo_rssi = 0;
@@ -614,12 +634,39 @@ static bool     pantalla_on = true;
 /* Estaciones oidas ultimamente. Sirven para decidir si repetir tiene sentido:
    ver `hay_a_quien_repetir()`. Se apuntan con CUALQUIER trama, no solo con las
    balizas, porque cualquier cosa que oigamos demuestra que ese nodo esta ahi. */
-struct Vecino { uint32_t src; uint32_t t; bool celda; };
+/* El `rssi` es lo que convierte la lista de vecinos en un MAPA: saber que
+   oigo a X no dice nada; saber que lo oigo a −112 dBm dice que ese enlace esta
+   al limite y que ahi hace falta otra celda. Se guarda el ultimo, no una media:
+   lo que interesa es como esta AHORA. 127 = todavia sin medida (llego por el
+   enlace, o el papel se supo por una baliza que no era del aire). */
+struct Vecino { uint32_t src; uint32_t t; bool celda; int8_t rssi; };
 static Vecino vecinos[VECINOS_N];
 
-struct Vista { uint32_t src; uint8_t stream, seq, tipo; uint32_t t; };
+struct Vista { uint32_t src; uint8_t stream, seq, tipo; uint32_t t; bool rf; };
 static Vista dedupe[DEDUPE_N];
 static uint8_t dedupe_i = 0;
+
+/* ────────────── EL NODO NO ARBITRA: TRANSPORTA ──────────────
+   Un nodo no puede elegir entre la copia de radio y la de Internet, y la v1.40
+   se estrello contra eso: arbitraba por STREAM —"si esta transmision me entra
+   por la antena, callo la de Internet"— y bastaba con que llegase el INICIO
+   por radio para callar el resto de la frase. Medido el 10-sep con un tono
+   inyectado por el 4460: la celda repitio el INICIO (llego a −60 dBm), los
+   lotes de voz NO llegaron por el aire, y como el stream ya estaba "marcado
+   como de radio" **la voz entera se perdio teniendola Internet delante**.
+
+   Que el INICIO llegue por radio no dice nada de los lotes. Ni un nodo tiene
+   con que componer: no hay buffer de audio ni sabe de secuencias que faltan.
+   Quien compone es el que ESCUCHA, lote a lote, con su ventana (ver la app).
+
+   Asi que el nodo hace lo unico que le toca:
+     * ENTREGA al anfitrion TODO lo que le llega, de los dos caminos y con su
+       RSSI de verdad. Ver las dos copias es justo lo que la app necesita para
+       rellenar huecos y para saber cuanto trajo la antena.
+     * REPITE UNA SOLA VEZ cada trama —la primera copia que le llegue—, porque
+       ahi si emitir dos veces lo mismo ocuparia el canal para nada.
+   Y sigue valiendo lo de siempre: lo que entra por el aire nunca lo tapa una
+   copia de Internet (ver `ya_visto`). */
 
 struct Pendiente { uint8_t buf[CAB_LEN + MAX_PAYLOAD]; uint8_t len; uint32_t cuando; };
 static Pendiente cola[COLA_N];
@@ -711,6 +758,11 @@ static void del_enlace(uint8_t tipo, const uint8_t *d, uint16_t n, int idx);
 static void procesar(uint8_t *b, uint8_t len, float rssi, float snr);
 static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx);
 static void manda_estado();
+/* Declaradas aqui porque `CMD_WIFI` las usa mucho antes de donde se definen:
+   aplicar el WiFi en caliente obliga a rearrancarlo desde el tratamiento de la
+   orden, no solo desde `setup()`. */
+static void arranca_wifi();
+static void purgar_cola();
 static void renombra_bt();           // definida mas abajo, junto al resto del BT
 static Preferences prefs;            // el indicativo TIENE que sobrevivir al reinicio
 static void guarda_ajustes();
@@ -849,23 +901,64 @@ static void log_usb(const char *s)
 }
 
 // ----------------------------------------------------------------- dedupe --
-static bool ya_visto(uint32_t src, uint8_t stream, uint8_t seq, uint8_t tipo)
+/* El dedupe RECUERDA POR DONDE VINO cada trama, y no es un detalle de
+   contabilidad: es lo que impide que Internet tape a la radio.
+
+   Una trama que solo se ha visto por el enlace **no descarta** a su gemela del
+   aire — esa es nueva para todo lo que importa: los contadores, el RSSI, la
+   repeticion y la marca de que la antena esta oyendo. Al reves si: lo que llega
+   por el enlace habiendose oido ya por la antena sobra, y se tira.
+
+   Asi el nodo se comporta igual lleve enlace o no, que es la regla de la casa.
+   Ver la nota de `Charla`. */
+static bool ya_visto(uint32_t src, uint8_t stream, uint8_t seq, uint8_t tipo,
+                     bool por_rf)
 {
     uint32_t ahora = millis();
     for (int i = 0; i < DEDUPE_N; i++) {
         Vista &v = dedupe[i];
         if (v.src == src && v.stream == stream && v.seq == seq && v.tipo == tipo
             && (ahora - v.t) < DEDUPE_MS)
-            return true;
+            return !(por_rf && !v.rf);      // la del aire pasa aunque haya copia
     }
     return false;
 }
 
-static void apuntar(uint32_t src, uint8_t stream, uint8_t seq, uint8_t tipo)
+/* `rf` por defecto: lo propio se apunta con la maxima preferencia para que
+   nada —tampoco el rebote de un repetidor— lo vuelva a levantar.
+   Devuelve true si la trama es NUEVA; false si ya habia pasado por aqui (la
+   otra copia). Eso es lo que decide si hay que repetirla: al aire sale una
+   sola vez, aunque llegue por los dos caminos. */
+static bool apuntar(uint32_t src, uint8_t stream, uint8_t seq, uint8_t tipo,
+                    bool rf = true)
 {
+    uint32_t ahora = millis();
+    // Si ya estaba (la copia del enlace, tipicamente), se ASCIENDE en su sitio:
+    // crear otra entrada dejaria la vieja viva y una tercera copia colaria.
+    for (int i = 0; i < DEDUPE_N; i++) {
+        Vista &v = dedupe[i];
+        if (v.src == src && v.stream == stream && v.seq == seq && v.tipo == tipo
+            && (ahora - v.t) < DEDUPE_MS) {
+            v.t = ahora;
+            if (rf) v.rf = true;
+            return false;                   // ya estaba: es la otra copia
+        }
+    }
     Vista &v = dedupe[dedupe_i];
-    v.src = src; v.stream = stream; v.seq = seq; v.tipo = tipo; v.t = millis();
+    v.src = src; v.stream = stream; v.seq = seq; v.tipo = tipo; v.t = ahora;
+    v.rf = rf;
     dedupe_i = (dedupe_i + 1) % DEDUPE_N;
+    return true;
+}
+
+/* ¿Hay algun enlace de Internet en pie? Es lo que anuncia `HOLA_ENLACE` y lo
+   que decide si este nodo manda informes: un nodo sin enlace no tiene por donde
+   mandarlos, y tampoco tiene nada que contar de Internet. */
+static bool hay_enlace()
+{
+    for (int i = T_ENL0; i < TUBOS_N; i++)
+        if (tubos[i].clase == TUBO_ENLACE) return true;
+    return false;
 }
 
 // ---------------------------------------------------------------- vecinos --
@@ -873,7 +966,7 @@ static void apuntar(uint32_t src, uint8_t stream, uint8_t seq, uint8_t tipo)
    El papel solo viaja en la baliza, y las balizas son cada diez minutos; con
    cualquier otra trama se refresca la hora pero NO se toca el papel, o un nodo
    dejaria de ser celda entre baliza y baliza. */
-static void apunta_vecino(uint32_t src, int celda = -1)
+static void apunta_vecino(uint32_t src, int celda = -1, int rssi = 127)
 {
     uint32_t ahora = millis();
     int libre = -1, viejo = 0;
@@ -881,6 +974,7 @@ static void apunta_vecino(uint32_t src, int celda = -1)
         if (vecinos[i].src == src) {
             vecinos[i].t = ahora;
             if (celda >= 0) vecinos[i].celda = (celda != 0);
+            if (rssi < 127) vecinos[i].rssi = (int8_t)rssi;
             return;
         }
         if (vecinos[i].src == 0 && libre < 0) libre = i;
@@ -890,6 +984,7 @@ static void apunta_vecino(uint32_t src, int celda = -1)
     vecinos[i].src = src;
     vecinos[i].t = ahora;
     vecinos[i].celda = (celda > 0);
+    vecinos[i].rssi = (int8_t)rssi;
 }
 
 /* ¿Hay una CELDA cubriendo a este nodo?
@@ -994,6 +1089,27 @@ static bool emitir(const uint8_t *b, uint8_t len)
     int st = radio.transmit((uint8_t *)b, len);
     if (pin_ptt) { delay(ptt_cola); digitalWrite(pin_ptt, LOW); }
     digitalWrite(P_LED, LOW);
+    /* ⚠️ DIO0 SIRVE PARA RxDone **Y** PARA TxDone, y la ISR sigue enganchada
+       mientras transmitimos: al acabar de emitir, el pin sube igual y
+       `al_recibir()` deja `hay_paquete = true`. El bucle se lo cree, lee el
+       FIFO —que contiene lo que ACABAMOS DE TRANSMITIR, escrito encima de lo
+       que hubiera antes— con la longitud residual del registro, y se procesa un
+       paquete que nadie ha recibido.
+
+       Medido el 10-sep-2026 en `celdaTEJADO`: un tono de 7 tramas dejaba
+       `tx +7` pero **`irq +15`**, con `rx +0` — o sea, ni una recepcion real y
+       el doble de interrupciones que emisiones.
+
+       Y la pista que lo delata, que es la que hay que mirar siempre: **una
+       recepcion de verdad NO puede traer una longitud incoherente**. El header
+       explicito de LoRa lleva la longitud dentro y el CRC la valida; un paquete
+       de 14 bytes no puede llegar como 30 por el aire. Si llega, es que no ha
+       llegado: se esta leyendo un FIFO que nadie ha llenado.
+
+       ⚠️ NO era el amplificador del tejado. Eso se escribio aqui el mismo dia y
+       era falso: el `rssi=-62` de esas tramas fantasma parecia una medida y era
+       un registro sin refrescar. */
+    hay_paquete = false;
     st_rx = armar_rx();
     if (st == RADIOLIB_ERR_NONE) { n_tx++; return true; }
     return false;
@@ -1203,11 +1319,25 @@ static void procesar(uint8_t *b, uint8_t len, float rssi, float snr)
     uint32_t src   = ((uint32_t)b[3] << 16) | ((uint32_t)b[4] << 8) | b[5];
     uint8_t stream = b[6], seq = b[7];
 
-    if (ya_visto(src, stream, seq, tipo)) { n_dup++; return; }
-    apuntar(src, stream, seq, tipo);
-    n_rx++;
-    t_ultimo_rx = millis();
-    ultimo_rssi = (int)rssi;
+    /* 127 no es una medida de radio: es la marca de que esto no salio del
+       aire, sino del enlace de Internet. Ver `del_enlace`. */
+    bool por_rf = (rssi < 127);
+
+    if (ya_visto(src, stream, seq, tipo, por_rf)) { n_dup++; return; }
+    /* Si es la PRIMERA copia, esta es la que sale al aire. La segunda se
+       entrega igual —el que escucha la quiere, para rellenar y para medir la
+       radio— pero no se vuelve a emitir. */
+    bool primera = apuntar(src, stream, seq, tipo, por_rf);
+    if (por_rf) {
+        n_rx++;
+        t_ultimo_rx = millis();
+        // Solo la VOZ ocupa el canal. Ver la nota de `t_ultima_voz`.
+        if (tipo == T_INICIO || tipo == T_VOZ || tipo == T_FIN)
+            t_ultima_voz = millis();
+        ultimo_rssi = (int)rssi;
+    } else {
+        n_net++;
+    }
     redibujar = true;
     despierta_pantalla();
     // El indicativo solo viene en INICIO y HOLA; en la voz hay que recordar el
@@ -1220,8 +1350,8 @@ static void procesar(uint8_t *b, uint8_t len, float rssi, float snr)
            que es quien lo tiene que enseñar. */
         /* El papel del vecino solo viaja aqui: en la baliza, primer byte tras
            la cabecera. Con eso un cliente sabe si tiene celda encima. */
-        if (tipo == T_HOLA && len > CAB_LEN)
-            apunta_vecino(src, (b[CAB_LEN] & HOLA_CELDA) ? 1 : 0);
+        if (tipo == T_HOLA && por_rf && len > CAB_LEN)
+            apunta_vecino(src, (b[CAB_LEN] & HOLA_CELDA) ? 1 : 0, (int)rssi);
         int li = (int)len - CAB_LEN - salto;
         if (li > 0) {
             if (li > MAX_INDICATIVO) li = MAX_INDICATIVO;
@@ -1232,23 +1362,77 @@ static void procesar(uint8_t *b, uint8_t len, float rssi, float snr)
         }
     }
 
-    // 1) entregar al anfitrion (a todos los que haya).
+    /* ─── UNA BALIZA SOLO SIGNIFICA ALGO POR RADIO ───
+       Una baliza dice "estoy aqui y me oyes". Por Internet eso es mentira: no
+       demuestra ni un dB de cobertura, y creersela tiene consecuencias de
+       verdad — `apunta_vecino` mas arriba se la salta ya, porque si no un
+       nodo podria darse por CLIENTE de una celda que solo ha visto por la
+       linea, y **un cliente no repite**: la malla se abre un agujero por
+       tener Internet. Tampoco se enseña al movil (la lista de nodos a la
+       vista es la de quien te oye) ni se repite por la antena (anunciaria en
+       el aire a alguien que no esta en el aire).
+
+       Suben a Internet igual, eso si: la baliza que una celda oyo POR RADIO
+       cruza por su enlace y de ahi salen el mapa y el igate. Que es la regla
+       de siempre: para salir en el mapa hay que haber llegado por radio. */
+    if (tipo == T_HOLA && !por_rf) return;
+
+    /* EL INFORME NO ES PARA ESTE NODO. Va del que lo manda al censo, y por el
+       camino solo se encadena entre enlaces (eso ya lo hizo `del_enlace` antes
+       de llamar aqui). No se entrega al movil —no es voz ni una estacion a la
+       vista— y no se repite por la antena: sacarlo al aire con el `src` de otro
+       seria anunciar en RF a un nodo que no esta en RF, que es el agujero de
+       §4.17. Si llega uno POR la antena, alguien lo esta haciendo mal: fuera
+       tambien. */
+    if (tipo == T_INFORME) return;
+
+    /* 1) entregar al anfitrion (a todos los que haya). SIEMPRE, y las dos
+       copias: el que escucha necesita ver las dos para tapar con una lo que le
+       falte de la otra, y para saber cuanto le trajo de verdad la antena. */
     entrega_al_anfitrion(b, len, rssi, snr, -1);
 
     /* 1b) y al nodo del otro lado del enlace, si lo hay. Salvo que venga
        precisamente de ahi (rssi 127 = no salio de la radio): devolverselo seria
        tirar de la linea para nada, aunque el dedupe del otro lado lo pare. */
-    if (rssi < 127) reparte_al_enlace(b, len, -1);
+    if (por_rf) reparte_al_enlace(b, len, -1);
 
-    apunta_vecino(src);
+    apunta_vecino(src, -1, por_rf ? (int)rssi : 127);
 
-    // 2) repetir, si queda salto, no es nuestro y hay a quien repetir
-    if (saltos > 0 && src != mi_src && !hay_a_quien_repetir(src)) {
+    /* 2) repetir, si queda salto, no es nuestro y hay a quien repetir.
+       Una celda SI repite por la antena lo que le entra por Internet: es la
+       pasarela, y es lo que une dos celulas que no se ven por radio. Pero
+       solo la PRIMERA copia — la segunda seria emitir dos veces lo mismo. */
+    if (saltos > 0 && src != mi_src && !primera) {
+        /* callada por duplicada, no por falta de a quien repetir. */
+    } else if (saltos > 0 && src != mi_src && !hay_a_quien_repetir(src)) {
         n_calladas++;
     } else if (saltos > 0 && src != mi_src) {
         uint8_t copia[CAB_LEN + MAX_PAYLOAD];
         memcpy(copia, b, len);
         copia[2] = (tipo << 4) | (saltos - 1);
+        /* ⚠️ LO QUE YO EMITO NO PUEDE VOLVER A ENTRARME. Se marca como vista
+           POR RADIO antes de emitirla, y con eso su eco queda cerrado para
+           siempre: `ya_visto` solo deja pasar una copia de aire cuando la
+           apuntada vino del enlace, asi que marcandola aqui el eco no la puede
+           levantar.
+
+           No es teorico, aunque la causa resulto ser otra: hasta la v1.45 la
+           ISR de DIO0 saltaba TAMBIEN al transmitir (ver `emitir`), asi que
+           cada emision se leia de vuelta como un paquete fantasma del FIFO, con
+           la longitud residual y el contenido deformado. Asi llego a la red un
+           `C31AGG` con el nombre del nodo pegado detras, o sea **el indicativo
+           de otra estacion**. Eso, en radio de aficionado, no es cosmetico.
+           Esta marca lo tapaba desde la v1.42 y se queda: vale igual para
+           cualquier repetidor que nos devuelva lo nuestro.
+
+           Hasta la v1.40 el eco moria callado por duplicado. El ascenso de RF
+           de la v1.41 —necesario para que la copia del aire no la tape la de
+           Internet— le abrio la puerta sin querer: esta marca la cierra sin
+           tocar el ascenso, que sigue haciendo falta.
+
+           ⚠️ Aqui llegue a escribir que la causa era el amplificador del
+           tejado. Era FALSO — ver §4.21. */
+        apuntar(src, stream, seq, tipo, true);
         // La espera es ALEATORIA a proposito: si todos los repetidores del
         // alcance repiten en el mismo instante, se destruyen entre ellos.
         encolar(copia, len, millis() + JITTER_MIN_MS +
@@ -1609,6 +1793,111 @@ static void gps_atiende()
 }
 #endif
 
+/* ────────────── LA BALIZA QUE NO SALE AL AIRE ──────────────
+   Lo que el censo de la red necesita saber y no cabe en el aire: por donde va
+   este nodo, con que ajustes, como esta de salud y —lo que de verdad importa—
+   **a quien oye y con cuanta señal**. Ese `rssi` por vecino es lo que
+   convierte una lista en un mapa de sombras: saber que A oye a X no dice si el
+   enlace esta holgado o al limite, que es justo la pregunta que hay que
+   responder para decidir donde va la siguiente celda.
+
+   Tres reglas, y las tres son deliberadas:
+     * **Sale SOLO por el enlace.** Nunca `emitir()`. Ni un simbolo de RF.
+     * **`saltos = 0`**, para que un nodo con firmware viejo —que no sabe que
+       es el tipo 5— no lo repita: no le quedan saltos. El protocolo se
+       protege solo, sin depender de que todo el mundo actualice.
+     * **Solo lo mandan los nodos con enlace.** Los demas no tienen por donde,
+       y tampoco tienen nada que contar de Internet; a ellos los describe quien
+       los oye.
+
+   Texto `clave=valor` y no binario: aqui no se paga aire, asi que lo que
+   importa es poder añadir un campo mañana sin romper a quien ya lo lee. */
+#define INFORME_MS  300000UL          // cada 5 min: no cuesta aire
+static uint32_t t_ultimo_informe = 0;
+
+/* Un campo de texto libre no puede llevar espacios: el informe se separa por
+   espacios, asi que un indicativo como `C31AG HONOR` —que es perfectamente
+   normal, la app se lo pone sola— partiria el campo en dos y el resto se
+   perderia sin un solo error. Se cambian por `_` al escribirlos. */
+static void sin_espacios(char *dst, const char *src, int cap)
+{
+    int i = 0;
+    for (; src[i] && i < cap - 1; i++)
+        dst[i] = (src[i] == ' ') ? '_' : src[i];
+    dst[i] = 0;
+}
+
+static void manda_informe()
+{
+    if (!hay_enlace()) return;
+    uint8_t b[CAB_LEN + MAX_PAYLOAD];
+    char ind_s[MAX_INDICATIVO + 1], nom_s[sizeof nombre_nodo];
+    sin_espacios(ind_s, mi_indicativo, sizeof ind_s);
+    sin_espacios(nom_s, nombre_nodo, sizeof nom_s);
+    const int cap = MAX_PAYLOAD;
+
+    /* Trama 0: quien soy y como estoy. */
+    cabecera(b, T_INFORME, 0, mi_src, 0, 0);          // saltos = 0, ver protocolo.h
+    char *t = (char *)(b + CAB_LEN);
+    int l = snprintf(t, cap,
+                  "v=%s pl=%s ind=%s nom=%s perfil=%s fq=%.3f sf=%u bw=%.0f "
+                  "pot=%u ch=%u up=%lu rx=%lu net=%lu tx=%lu rep=%lu dup=%lu "
+                  "mal=%lu bat=%u heap=%u",
+                  VERSION, PLACA, ind_s, nom_s,
+                  perfil == PERFIL_FIJO ? "celda" :
+                  (perfil == PERFIL_SOLO ? "solo" : "auto"),
+                  frecuencia, (unsigned)sf, ancho,
+                  (unsigned)potencia, (unsigned)mi_canal,
+                  (unsigned long)(millis() / 1000UL),
+                  n_rx, n_net, n_tx, n_repetidas, n_dup, n_malas,
+                  bateria_pct(), (unsigned)ESP.getFreeHeap());
+    if (l > cap) l = cap;                             // `snprintf` devuelve lo que CABRIA
+    reparte_al_enlace(b, (uint8_t)(CAB_LEN + l), -1);
+
+    /* Y EL GRAFO EN TRAMAS APARTE, TANTAS COMO HAGA FALTA.
+     *
+     * ⚠️ Iba pegado detras de lo de arriba y **se cortaba en silencio**: el
+     * texto de salud se come ~155 de los 200 bytes, asi que solo entraban DOS
+     * vecinos. O sea que el grafo se perdia justo cuando empieza a servir para
+     * algo — con dos nodos no hace falta un mapa. Es la misma trampa que ya
+     * mordio con la linea de estado (`snprintf` devuelve lo que HABRIA escrito,
+     * no lo que escribio).
+     *
+     * Como esto NO PAGA AIRE, la solucion es la barata: una trama por cada
+     * puñado de vecinos, con `seq` 1, 2, 3... El censo reinicia su lista al ver
+     * la trama 0 y va acumulando las demas. */
+    uint8_t seq = 1;
+    uint32_t ahora = millis();
+    int i = 0;
+    while (i < VECINOS_N) {
+        cabecera(b, T_INFORME, 0, mi_src, 0, seq);
+        t = (char *)(b + CAB_LEN);
+        l = snprintf(t, cap, "vec=");
+        bool alguno = false;
+        while (i < VECINOS_N) {
+            Vecino &v = vecinos[i];
+            if (v.src == 0 || (ahora - v.t) >= VECINO_MS) { i++; continue; }
+            char uno[24];
+            /* Un vecino sin medida sale con `-` y no con un numero inventado:
+               no es lo mismo "no lo he oido por radio" que "lo oigo a 0". */
+            if (v.rssi == 127)
+                snprintf(uno, sizeof uno, "%s%06lx:-:%c", alguno ? "," : "",
+                         (unsigned long)v.src, v.celda ? 'c' : 'n');
+            else
+                snprintf(uno, sizeof uno, "%s%06lx:%d:%c", alguno ? "," : "",
+                         (unsigned long)v.src, (int)v.rssi, v.celda ? 'c' : 'n');
+            int n = strlen(uno);
+            if (l + n >= cap) break;                  // no cabe: va en la siguiente
+            memcpy(t + l, uno, n); l += n;
+            alguno = true;
+            i++;
+        }
+        if (!alguno) break;
+        reparte_al_enlace(b, (uint8_t)(CAB_LEN + l), -1);
+        if (seq < 255) seq++;
+    }
+}
+
 static void manda_hola()
 {
     /* Cabecera + flags + bateria + indicativo + \0 + nombre + \0 + lat + lon. */
@@ -1632,7 +1921,10 @@ static void manda_hola()
     b[n++] = (hay_a_quien_repetir(0) ? HOLA_REPETIDOR : 0)
              | ((hay_anfitrion || bt_conectado) ? HOLA_PUENTE : 0)
              | (perfil == PERFIL_FIJO ? HOLA_CELDA : 0)
-             | (con_pos ? HOLA_POS : 0);
+             | (con_pos ? HOLA_POS : 0)
+             /* Y si por aqui se sale a Internet. Cero bytes de aire: el byte
+                de flags ya iba. Ver HOLA_ENLACE en protocolo.h. */
+             | (hay_enlace() ? HOLA_ENLACE : 0);
     b[n++] = bateria_pct();
     uint8_t li = strlen(mi_indicativo);
     memcpy(b + n, mi_indicativo, li); n += li;
@@ -1828,7 +2120,7 @@ static void manda_estado()
     char s[768];
     snprintf(s, sizeof s,
              "v%s(%s) %s perfil=%s activo=%lum canal=%u saltos=%u %.3fMHz sf%u bw%.0f cr%u %udBm "
-             "hw=%.0f-%.0fMHz/%u-%udBm banda=%.0f-%.0fMHz rx=%lu tx=%lu rep=%lu "
+             "hw=%.0f-%.0fMHz/%u-%udBm banda=%.0f-%.0fMHz rx=%lu net=%lu tx=%lu rep=%lu "
              "dup=%lu mal=%lu call=%lu vec=%u irq=%lu strx=%d rssi=%.0f bat=%u reset=%s "
              "heap=%u/%u nombre=%s bt=%s ok=%d visible=%d mac=%s%s btatasco=%lu btsalta=%lu ble=%u modo=%s btmodo=%u ampli=%u/%u/%u preamb=%u pos=%s%s wifi=%s",
              VERSION, PLACA, mi_indicativo,
@@ -1839,7 +2131,7 @@ static void manda_estado()
              potencia, (float)FREQ_MIN, (float)FREQ_MAX,
              (unsigned)POT_MIN, (unsigned)POT_MAX,
              (float)BANDA_MIN, (float)BANDA_MAX,
-             n_rx, n_tx, n_repetidas, n_dup, n_malas,
+             n_rx, n_net, n_tx, n_repetidas, n_dup, n_malas,
              n_calladas, cuenta_vecinos(0),
              (unsigned long)n_irq, st_rx, radio.getRSSI(false, true), bateria_pct(),
              motivo_reset(),
@@ -2015,11 +2307,23 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
             uint32_t la = (uint32_t)pos_lat, lo = (uint32_t)pos_lon;
             for (int i = 0; i < 4; i++) b[l++] = (uint8_t)(la >> (8 * i));
             for (int i = 0; i < 4; i++) b[l++] = (uint8_t)(lo >> (8 * i));
+        } else {
+            /* ⚠️ EL INDICATIVO SE CIERRA SIEMPRE CON UN CERO, aunque no haya
+               posicion detras. Cuesta UN byte y es lo que impide que una trama
+               deformada le pegue una cola: sin el, cualquier basura que quede
+               detras del indicativo se lee como parte del indicativo, y ahi ya
+               no es una etiqueta fea sino **el distintivo de otra estacion**.
+               Paso el 10-sep-2026 con el eco del amplificador del tejado:
+               `C31AG` llego a la red como `C31AGG`. El que lee ya corta en el
+               primer cero desde siempre, asi que esto no rompe a nadie. */
+            b[l++] = 0;
         }
         apuntar(src_de(idx), tx_stream, 0, T_INICIO);
         emitir(b, l);
-        // Eco local: los demas clientes de ESTE nodo no lo oirian por radio.
-        entrega_al_anfitrion(b, l, 127, 0, idx);
+        /* Eco local: los demas clientes de ESTE nodo no lo oirian por radio.
+           Va marcado como LOCAL y no como "de Internet": son cosas distintas y
+           confundirlas falsea las cuentas de cobertura (ver protocolo.h). */
+        entrega_al_anfitrion(b, l, RSSI_LOCAL, 0, idx);
         reparte_al_enlace(b, l, -1);
         break;
     }
@@ -2030,7 +2334,7 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
         memcpy(b + CAB_LEN, d, n);
         apuntar(src_de(idx), tx_stream, tx_seq, T_VOZ);
         emitir(b, CAB_LEN + n);
-        entrega_al_anfitrion(b, CAB_LEN + n, 127, 0, idx);
+        entrega_al_anfitrion(b, CAB_LEN + n, RSSI_LOCAL, 0, idx);
         reparte_al_enlace(b, CAB_LEN + n, -1);
         break;
     }
@@ -2042,7 +2346,7 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
             cabecera(b, T_FIN, saltos_def, src_de(idx), tx_stream, ++tx_seq);
             apuntar(src_de(idx), tx_stream, tx_seq, T_FIN);
             emitir(b, CAB_LEN);
-            entrega_al_anfitrion(b, CAB_LEN, 127, 0, idx);
+            entrega_al_anfitrion(b, CAB_LEN, RSSI_LOCAL, 0, idx);
             reparte_al_enlace(b, CAB_LEN, -1);
         }
         ptt_de = -1;
@@ -2123,7 +2427,7 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
          * es NUESTRA bandera, y esa si se limpia cuando `begin()` falla. Las dos
          * se desincronizan y desde ese momento **el nodo no acepta ninguna
          * actualizacion mas hasta que alguien lo reinicie fisicamente**.
-         * Medido el 8-sep-2026 con nodo-de-casa: tres intentos seguidos por WiFi y
+         * Medido el 8-sep-2026 con nodoCASA: tres intentos seguidos por WiFi y
          * a partir del segundo, "no cabe la actualizacion: error 0" para
          * siempre.
          *
@@ -2280,9 +2584,19 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
         while (i < n) { wifi_clave += (char)d[i]; i++; }
         red_modo = wifi_ssid.length() ? RED_CLIENTE : RED_OFF;
         guarda_ajustes();
+        /* Y SE APLICA EN EL ACTO, no al reiniciar.
+         *
+         * Antes se guardaba y ya: el usuario veia "guardado", daba por hecho
+         * que estaba conectado, y el nodo seguia sin red hasta el siguiente
+         * arranque — que ademas no habia forma de provocar. Guardar un ajuste y
+         * que no pase nada es de las cosas que mas desconciertan, porque no hay
+         * ningun error que mirar. */
+        if (wifi_activo) { WiFi.disconnect(true); WiFi.mode(WIFI_OFF); wifi_activo = false; }
+        servidores_en_pie = false;
+        arranca_wifi();
         log_txt(wifi_ssid.length()
-                ? "WiFi guardado; tiene efecto al reiniciar el nodo"
-                : "WiFi olvidado");
+                ? "WiFi guardado; conectando ahora"
+                : "WiFi olvidado y apagado");
         manda_estado();
         break;
     }
@@ -2314,7 +2628,21 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
         }
         red_modo = m; wifi_ssid = ss; wifi_clave = cl;
         guarda_ajustes();
-        log_txt("red guardada; tiene efecto al reiniciar el nodo");
+        /* Y SE APLICA EN EL ACTO, igual que `CMD_WIFI`.
+           Decia "tiene efecto al reiniciar el nodo" y eso es justo la trampa
+           que ya esta escrita ahi al lado: guardar un ajuste y que no pase nada
+           es de las cosas que mas desconciertan, porque no hay ningun error que
+           mirar. Y aqui ademas hacia daño doble — para sacar un nodo del modo
+           AP hay que mandarle esto, asi que quien lo intentaba veia "guardado",
+           reiniciaba, y el nodo volvia a levantar su propia red. Que dos
+           comandos hermanos se comporten distinto no lo adivina nadie. */
+        if (wifi_activo) { WiFi.disconnect(true); WiFi.mode(WIFI_OFF); wifi_activo = false; }
+        servidores_en_pie = false;
+        ota_lista = false;
+        arranca_wifi();
+        log_txt(red_modo == RED_OFF ? "red apagada"
+                : (red_modo == RED_AP ? "punto de acceso levantado ahora"
+                                      : "red guardada; conectando ahora"));
         manda_estado();
         break;
     }
@@ -2482,6 +2810,19 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
             log_txt(m);
             manda_estado();
         }
+        break;
+    }
+
+    case CMD_REINICIA: {
+        if (ota_curso) { log_txt("no reinicio: hay una actualizacion en curso"); break; }
+        if (transmitiendo) { log_txt("no reinicio: se esta transmitiendo"); break; }
+        log_txt("reiniciando por orden del anfitrion");
+        /* Se le da tiempo a que la respuesta SALGA por el cable, el BLE o el
+           socket antes de cortar. Sin esta espera, el que lo pidio no recibe
+           nada y no sabe si le hicieron caso o el nodo se colgo. */
+        purgar_cola();
+        delay(300);
+        ESP.restart();
         break;
     }
 
@@ -3212,11 +3553,32 @@ static WiFiServer srv_enlace(PUERTO_ENLACE);
 /* Descubrimiento: el nodo contesta a quien pregunte por difusion. Asi la app
    no necesita que nadie se aprenda una IP que ademas cambia con el DHCP. */
 static WiFiUDP udp_busca;
-static bool servidores_en_pie = false;
+
+/* ⚠️ UN ESPACIO DE MAS EN EL SSID DEJA EL NODO SIN RED, Y SIN UN SOLO ERROR.
+ *
+ * Paso de verdad: un nodo llevaba horas con `wifi=buscando` contra una red
+ * cuyo nombre acababa en un espacio que le colo el teclado del movil al
+ * teclearlo. No hay forma de verlo desde fuera — el nombre se muestra igual con
+ * espacio que sin el — y el sintoma es un nodo que "no coge el WiFi" sin un
+ * solo error en ninguna parte.
+ *
+ * Se recorta AQUI, en el nodo, y no solo en la app: asi queda arreglado tambien
+ * para los que ya lo tengan mal guardado, sin que nadie tenga que volver a
+ * teclear nada. Un SSID con espacios en los bordes es legal pero practicamente
+ * inexistente; un espacio colado por un teclado, constante. */
+static String sin_bordes(const String &s)
+{
+    int a = 0, b = s.length();
+    while (a < b && s[a] == ' ') a++;
+    while (b > a && s[b - 1] == ' ') b--;
+    return s.substring(a, b);
+}
 
 static void arranca_wifi()
 {
     if (red_modo == RED_OFF) return;
+    wifi_ssid = sin_bordes(wifi_ssid);
+    wifi_ssid2 = sin_bordes(wifi_ssid2);
 
     if (red_modo == RED_AP) {
         /* El nodo levanta SU PROPIA red. Este es el caso de la excursion: no
@@ -3518,20 +3880,35 @@ static void atiende_wifi()
         arranca_servidores();
         // La OTA por WiFi solo tiene sentido colgado de una red de verdad.
         if (!ota_lista) arranca_ota();
-    } else if (wifi_ssid2.length() && millis() - wifi_probando > 20000UL) {
-        /* Veinte segundos por red y a por la otra. Ni tan corto que corte un
-           enganche a medias, ni tan largo que un nodo sin Bluetooth se pase
-           minutos incomunicado en el unico sitio donde no puedes bajarlo. */
-        wifi_cual = wifi_cual ? 0 : 1;
+    } else if (millis() - wifi_probando > 20000UL) {
+        /* SE REINTENTA SIEMPRE, HAYA UNA RED O DOS.
+         *
+         * ⚠️ Esto estaba condicionado a `wifi_ssid2.length()`, o sea que **solo
+         * reintentaba quien tuviera configurada una SEGUNDA red**. Con una sola
+         * —el caso normal— la condicion nunca se cumplia: el nodo perdia el
+         * WiFi, caia en este `else if`, no entraba, y se quedaba sin red **para
+         * siempre** hasta que alguien lo reiniciara a mano. Lo conto el usuario
+         * el 10-sep-2026: *«el wifi hay que forzar conectar siempre despues de
+         * perderlo, no lo hace automaticamente»*.
+         *
+         * El reintento se escribio para ALTERNAR entre dos redes y se olvido el
+         * caso de tener una. Con una, se reintenta esa misma; con dos, se van
+         * turnando. Veinte segundos por vuelta: ni tan corto que corte un
+         * enganche a medias, ni tan largo que un nodo sin Bluetooth se pase
+         * minutos incomunicado en el unico sitio donde no puedes bajarlo. */
+        if (wifi_ssid2.length()) wifi_cual = wifi_cual ? 0 : 1;
         wifi_probando = millis();
         const String &ss = wifi_cual ? wifi_ssid2  : wifi_ssid;
         const String &cl = wifi_cual ? wifi_clave2 : wifi_clave;
-        WiFi.disconnect();
-        WiFi.begin(ss.c_str(), cl.c_str());
-        char m[80];
-        snprintf(m, sizeof m, "WiFi: probando la red %s (%s)",
-                 wifi_cual ? "segunda" : "primera", ss.c_str());
-        log_usb(m);
+        if (ss.length()) {
+            WiFi.disconnect();
+            WiFi.begin(ss.c_str(), cl.c_str());
+            char m[80];
+            snprintf(m, sizeof m, "WiFi: reintento con %s (%s)",
+                     wifi_ssid2.length() ? (wifi_cual ? "la segunda" : "la primera")
+                                         : "la red guardada", ss.c_str());
+            log_usb(m);
+        }
     }
     if (ota_lista) ArduinoOTA.handle();
     atiende_clientes();
@@ -3648,9 +4025,16 @@ void loop()
 #endif
     purgar_cola();
 
+    /* El informe por el enlace. No gasta aire, asi que la cadencia la manda
+       solo lo util que sea el dato, no el coste: 5 min. */
+    if (millis() - t_ultimo_informe >= INFORME_MS) {
+        t_ultimo_informe = millis();
+        manda_informe();
+    }
+
     // Aviso de canal ocupado: la app tiene que poder bloquear el PTT mientras
     // otro habla, que es la unica disciplina que hay en un canal simplex.
-    bool ocupado = (millis() - t_ultimo_rx) < OCUPADO_MS;
+    bool ocupado = t_ultima_voz != 0 && (millis() - t_ultima_voz) < OCUPADO_MS;
     if (ocupado != canal_ocupado) {
         canal_ocupado = ocupado;
         redibujar = true;

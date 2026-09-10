@@ -19,7 +19,7 @@
 #define PROTO_MAGIC   0xA1        // 0xA0 | version 1
 // Version del firmware. Sale en el estado: es como se comprueba que una
 // actualizacion por radio ha entrado de verdad.
-#define VERSION       "1.37"
+#define VERSION       "1.51"
 
 #define MAX_PAYLOAD   200         // holgado para un lote de 960 ms a 1200 bps
 #define MAX_INDICATIVO 12
@@ -30,6 +30,18 @@ enum : uint8_t {
     T_INICIO = 2,   // pulsacion de PTT: abre stream y da el indicativo
     T_FIN    = 3,   // soltar el PTT
     T_HOLA   = 4,   // baliza: indicativo, capacidades, bateria
+    /* ⚠️ LA BALIZA QUE **NO SALE AL AIRE**. Va SOLO por el enlace de Internet,
+       nunca por RF, y solo la mandan los nodos que tienen enlace — que son
+       justo los que pueden permitirsela.
+       Por que aparte y no metiendo mas bytes en la baliza de radio: **el aire
+       es el unico recurso que no se puede ampliar**. Cada byte añadido a
+       `T_HOLA` lo paga cada nodo, cada minuto, para siempre, incluidos los que
+       no tienen Internet ni les hace falta. Aqui, en cambio, cabe todo lo que
+       el censo de la red quiera saber sin costar un solo simbolo de RF.
+       Se manda con **`saltos = 0`**, y eso no es un detalle: un nodo con
+       firmware viejo no sabe que es el tipo 5, pero **no lo repetira igualmente
+       porque no le quedan saltos**. El protocolo se protege solo. */
+    T_INFORME = 5,
 };
 
 // ---- perfiles de nodo ----
@@ -99,6 +111,13 @@ struct Cabecera {
 //   T_INICIO : [modo][indicativo]\0[lat:4][lon:4]   (la cola, desde la v1.35)
 //   T_FIN    : (vacio)
 //   T_HOLA   : [flags][bateria %][indicativo]\0[nombre]\0[lat:4][lon:4]
+//   T_INFORME: texto `clave=valor` separado por espacios. SOLO por el enlace.
+//              Texto y no binario a proposito: no paga aire, asi que lo que
+//              importa es poder añadir campos sin romper a quien ya lo lea —
+//              el que no entienda una clave se la salta. El grafo va en
+//              `vec=<src>:<rssi>:<papel>,...`, y ese `rssi` es el dato que
+//              convierte una lista de vecinos en un mapa de sombras: saber que
+//              A oye a X no dice si el enlace esta holgado o al limite.
 //
 // LA BALIZA CRECE POR EL FINAL, SIEMPRE DETRAS DE UN CERO. Es el mismo truco
 // con el que entro el nombre en la v1.30 y ahora la posicion en la v1.34: quien
@@ -165,6 +184,29 @@ struct Cabecera {
  * la baliza. Un nodo puede tener posicion y no publicarla (ver la nota de
  * privacidad de abajo), y entonces este bit va a cero y la cola no viaja. */
 #define HOLA_POS        0x08     // detras del nombre van lat y lon
+/* POR AQUI SE SALE A INTERNET. Cuesta **cero bytes de aire** —el byte de flags
+   ya viajaba— y es de las pocas cosas de Internet que un vecino de RADIO
+   necesita saber: por donde sale su zona al mundo. Eso lo tiene que saber un
+   nodo, no un servidor. Todo lo demas del enlace va en `T_INFORME`, que no
+   gasta aire. */
+#define HOLA_ENLACE     0x10     // este nodo tiene enlace de Internet en pie
+
+/* ---- de donde viene una trama, para el anfitrion ----
+ *
+ * El campo `rssi` que se le entrega al movil es una medida de radio SALVO dos
+ * valores imposibles por el aire, que son marcas:
+ *
+ *   127 = vino por el ENLACE de Internet.
+ *   126 = ECO LOCAL: otro cliente de ESTE MISMO nodo. Ni ha salido por la
+ *         antena ni ha tocado Internet.
+ *
+ * Los dos eran 127 hasta la v1.47, y eso mentia de una forma que importa:
+ * hablando con alguien colgado del mismo nodo, la app enseñaba 🌐 y apuntaba
+ * la voz como "tapada por Internet" **sin que hubiera Internet de por medio**.
+ * Y con las cuentas de radio e Internet es justamente con lo que se decide si
+ * la cobertura esta bien o mal: un dato asi manda a mirar donde no es. */
+#define RSSI_ENLACE     127
+#define RSSI_LOCAL      126
                                  // Solo lo pone una CELDA: ver mas abajo donde
                                  // va la posicion de cada cual.
 
@@ -284,6 +326,17 @@ enum : uint8_t {
      *     seguir jurando que esta donde estuvo.
      *   POS_FIJA (se teclea una vez): en NVS, y no caduca nunca. Es lo que
      *     lleva una celda: no se mueve, y el mapa de la red la necesita. */
+    /* Reiniciar el nodo. Sin datos.
+     *
+     * Hacia falta y no estaba, y se noto el 9-sep: guardar un WiFi nuevo no
+     * tenia efecto hasta reiniciar, y **no habia forma de reiniciar** salvo ir
+     * a la placa y quitarle la corriente. Para el nodo que llevas encima es una
+     * molestia; para una celda en un tejado ajeno es no poder arreglarlo.
+     *
+     * Se ignora mientras se transmite o hay una actualizacion en curso: cortar
+     * una OTA por la mitad no rompe nada (la placa sigue con el firmware que
+     * tenia) pero obliga a repetirla entera, y son cinco minutos. */
+    CMD_REINICIA = 0x18, // -
     CMD_POS    = 0x17,   // [origen][lat:4][lon:4]   posicion del nodo
                          // Vacio = olvidarla Y DEJAR DE PUBLICAR (tambien la
                          // del GPS propio); con datos, se vuelve a publicar.
