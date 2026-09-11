@@ -30,6 +30,7 @@ vino por Internet, no por el aire". La app lo pinta distinto y el usuario ve por
 donde le llega cada cosa.
 """
 import os
+import re
 import socket
 import sys
 import threading
@@ -43,9 +44,61 @@ T_VOZ, T_INICIO, T_FIN, T_HOLA = 1, 2, 3, 4
 CMD_INICIO, CMD_VOZ, CMD_FIN = 0x01, 0x02, 0x03
 CMD_ESTADO, CMD_IDENT, CMD_AIRE = 0x05, 0x0E, 0x11
 EV_INICIO, EV_VOZ, EV_FIN, EV_HOLA, EV_ESTADO = 0x81, 0x82, 0x83, 0x84, 0x85
+EV_LOG = 0x8F
 
 RSSI_INTERNET = 127          # ver la nota de arriba
 SALTOS = 3
+
+# ---------------------------------------------------------------------------
+# ¿Esto parece un indicativo de verdad?
+#
+# Lo que entra por el 4460 acaba SALIENDO POR LA ANTENA de una celda, con el
+# indicativo que diga el que habla. La estacion es de su titular, asi que lo
+# menos que se puede pedir es que quien la haga transmitir se identifique con
+# algo que tenga forma de indicativo y no con `ANON`, `AAAAA` o `12345`.
+#
+# ⚠️ QUE ESTO NO SE CONFUNDA CON AUTENTICACION. No para a nadie decidido:
+# cualquiera puede teclear un indicativo valido, o el tuyo. Para el ruido —bots,
+# gente trasteando, y sobre todo al que sale sin identificarse—, que es
+# justamente lo que hay hoy. Para lo otro no hay filtro que valga.
+#
+# La forma es la de la UIT: prefijo, un digito, y de una a cuatro letras.
+#   EA3ABC · C31AG · W1AW · 2E0ABC · 9A1A · 4X4ABC · 3DA0RS
+# El prefijo tiene que llevar ALGUNA LETRA, que si no `1234A` colaria.
+_FORMA = re.compile(r'^([A-Z0-9]{1,3})([0-9])([A-Z]{1,4})$')
+# Los que tienen la forma pero son el "sin indicativo" de toda la vida.
+_FALSOS = {'N0CALL', 'NOCALL', 'ANON', 'TEST', 'A0AAA', 'N0AAA'}
+
+
+def parece_indicativo(ind):
+    """Estricto con la forma, generoso con lo que el indicativo lleve pegado.
+
+    La app añade el nombre del operador detras de un espacio (`EA3ABC Ana`) y
+    son normales los sufijos de portable (`/P`, `/M`) o el prefijo de otro pais
+    (`F/EA3ABC`). Nada de eso es motivo para no dejar hablar a alguien: se mira
+    token a token y basta con que UNO tenga forma de indicativo.
+
+    Y el SUFIJO `-NN`, de **-1 a -99**, porque una persona usa varios cacharros
+    con el mismo indicativo: `EA3ABC`, `EA3ABC-2`, `EA3ABC-55`. Se comprueba de
+    verdad en vez de ignorar lo que haya detras del guion —que es lo que hacia
+    la primera version—, asi que `EA3ABC-loquesea`, `EA3ABC-999` y `EA3ABC-0`
+    se quedan fuera. El indicativo a secas vale igual, claro."""
+    trozos = (ind or '').strip().upper().split()
+    if not trozos:                               # vacio, o solo espacios
+        return False
+    base = trozos[0]                             # fuera el nombre del operador
+    if '-' in base:                              # sufijo de dispositivo, -1..-99
+        base, _, sufijo = base.partition('-')
+        if not re.fullmatch(r'[0-9]{1,2}', sufijo) or not 1 <= int(sufijo) <= 99:
+            return False
+    for trozo in base.split('/'):                # F/EA3ABC, EA3ABC/P
+        m = _FORMA.match(trozo)
+        if not m or trozo in _FALSOS:
+            continue
+        if any(c.isalpha() for c in m.group(1)):  # el prefijo lleva letra
+            return True
+    return False
+
 
 
 def enmarcar(tipo, datos=b''):
@@ -117,10 +170,11 @@ def cabecera(tipo, src, stream, seq, canal=1):
 
 
 class Puente:
-    def __init__(self, reflector, canal=1):
+    def __init__(self, reflector, canal=1, exige_ind=False):
         self.host, _, p = reflector.partition(':')
         self.puerto = int(p or 4461)
         self.canal = canal
+        self.exige_ind = exige_ind
         self.clientes = []            # sockets de apps conectadas
         self.quien = {}               # socket -> indicativo que declaro
         self.hablando = {}            # (src, stream) -> indicativo, y cuando
@@ -281,6 +335,10 @@ class Puente:
         print('[cliente] %s dentro (%d en total)'
               % (direccion[0], len(self.clientes)), flush=True)
         ind = 'ANON'
+        # Con --exige-indicativo, hasta que no se identifique de verdad NO
+        # transmite. Escuchar puede desde el primer segundo: la asimetria es a
+        # proposito, porque oir no hace emitir a la antena de nadie.
+        puede = not self.exige_ind
         src = hash_indicativo(ind)
         stream, seq = int(time.time()) & 0xFF, 0
         d = Desentrama()
@@ -295,9 +353,22 @@ class Puente:
                         src = hash_indicativo(ind)
                         with self.cerrojo:
                             self.quien[sock] = ind.strip()
-                        print('[cliente] %s es %s' % (direccion[0], ind), flush=True)
+                        bueno = parece_indicativo(ind)
+                        puede = bueno or not self.exige_ind
+                        print('[cliente] %s es %s%s' % (direccion[0], ind,
+                              '' if bueno else
+                              ' — NO PARECE UN INDICATIVO' +
+                              ('; no podra transmitir' if self.exige_ind else
+                               ' (no se exige)')), flush=True)
+                        if not bueno and self.exige_ind:
+                            # Que el usuario sepa POR QUE no le sale la voz.
+                            sock.sendall(enmarcar(EV_LOG,
+                                b'para transmitir hace falta tu indicativo '
+                                b'de radioaficionado'))
                         self._echa_fantasmas(sock, ind)
                     elif tipo == CMD_INICIO and carga:
+                        if not puede:
+                            continue
                         stream = (stream + 1) & 0xFF
                         seq = 0
                         # El indicativo se cierra con un CERO, igual que en
@@ -311,6 +382,8 @@ class Puente:
                             bytes([RSSI_INTERNET, 0]) + t[3:6] + bytes([stream]) +
                             t[CAB_LEN:]), salvo=sock, no_para=ind)
                     elif tipo == CMD_VOZ and len(carga) >= 2:
+                        if not puede:
+                            continue
                         seq = (seq + 1) & 0xFF
                         t = cabecera(T_VOZ, src, stream, seq, self.canal) + carga
                         self.manda_al_aire(t)
@@ -318,6 +391,8 @@ class Puente:
                             bytes([RSSI_INTERNET, 0]) + t[3:6] + bytes([stream, seq]) +
                             carga), salvo=sock, no_para=ind)
                     elif tipo == CMD_FIN:
+                        if not puede:
+                            continue
                         seq = (seq + 1) & 0xFF
                         t = cabecera(T_FIN, src, stream, seq, self.canal)
                         self.manda_al_aire(t)
@@ -353,13 +428,21 @@ def main():
     escucha = int(opt('--escucha', '4460'))
     reflector = opt('--reflector', '127.0.0.1:4461')
     canal = int(opt('--canal', '1'))
+    # Escuchar, cualquiera. TRANSMITIR, solo quien se identifique con algo que
+    # tenga forma de indicativo: lo que entra por aqui sale por la antena de
+    # una celda, y esa estacion tiene un titular.
+    exige_ind = '--exige-indicativo' in a
 
-    p = Puente(reflector, canal)
+    p = Puente(reflector, canal, exige_ind)
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(('0.0.0.0', escucha))
     srv.listen(8)
     print('nodo de datos escuchando en %d, reflector en %s' % (escucha, reflector),
+          flush=True)
+    print('-- indicativo: %s' % ('EXIGIDO para transmitir (escuchar, cualquiera)'
+                                 if exige_ind else
+                                 'no se comprueba; hasta `ANON` puede emitir'),
           flush=True)
     while True:
         sock, dirn = srv.accept()

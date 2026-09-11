@@ -60,6 +60,32 @@ class MainActivity : Activity(), NodoService.Observador {
     private val ui = Handler(Looper.getMainLooper())
     private var dialogoCodigo = false
 
+    /** Fondo del PTT: verde/ámbar/rojo y el vaciado del tiempo. Ver PttFondo. */
+    private val fondoPtt = PttFondo()
+
+    /** Repinta el PTT mientras se transmite: los segundos en el texto y el
+     *  depósito bajando. 200 ms es de sobra —el ojo no distingue más— y no
+     *  gasta batería en algo que dura menos de un minuto.
+     *
+     *  Se apoya en `NodoService.inicioTx` y NO en una marca propia: el PTT se
+     *  puede haber abierto con la tecla física o con esta pantalla en segundo
+     *  plano, y entonces una marca de aquí contaría desde que se vuelve a
+     *  mirar, que es justo cuando el dato importa. */
+    private val relojTx = object : Runnable {
+        override fun run() {
+            val t0 = NodoService.instancia?.inicioTx ?: 0L
+            if (t0 == 0L) return
+            val seg = ((System.currentTimeMillis() - t0) / 1000L).toInt()
+            val quedan = NodoService.TOT_S - seg
+            fondoPtt.frac = quedan.toFloat() / NodoService.TOT_S
+            // Los últimos diez segundos se cuentan hacia atrás: ahí lo que hace
+            // falta saber no es cuánto llevas, es que te van a cortar.
+            bPtt.text = if (quedan in 0..10) "CORTE EN ${quedan}s"
+                        else "TRANSMITIENDO   ${seg}s"
+            ui.postDelayed(this, 200)
+        }
+    }
+
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         prefs = Prefs(this)
@@ -68,6 +94,7 @@ class MainActivity : Activity(), NodoService.Observador {
         tQuien = findViewById(R.id.quien)
         tLog = findViewById(R.id.log)
         bPtt = findViewById(R.id.ptt)
+        bPtt.background = fondoPtt
         rueda = findViewById(R.id.rueda)
         Nombres.arranca(this)
         Nombres.alLlegar = { ui.post { pintaRueda() } }
@@ -106,6 +133,13 @@ class MainActivity : Activity(), NodoService.Observador {
                      else if (it.datosEnlazado) "solo datos"
                      else it.ultimoFallo)
             onCanal(it.canalOcupado)
+            // Se puede volver a esta pantalla con el PTT ya abierto (tecla
+            // física, o transmitiendo en segundo plano): hay que recuperar el
+            // rojo y el reloj, no esperar al siguiente evento.
+            // Se mira `inicioTx` y no `transmitiendo` porque durante el
+            // margen de reanudación el canal sigue tomado: pintar verde ahí
+            // sería decir que has soltado cuando todavía no.
+            onTx(it.inicioTx != 0L)
             /* El nodo puede haber pedido el codigo ANTES de que esta pantalla
                estuviera escuchando: el servicio conecta por su cuenta y el
                aviso llega cuando llega. Si solo se atendiera el evento en
@@ -118,6 +152,7 @@ class MainActivity : Activity(), NodoService.Observador {
 
     override fun onPause() {
         super.onPause()
+        ui.removeCallbacks(relojTx)
         ui.removeCallbacks(vigilante)
         if (NodoService.instancia?.observador === this)
             NodoService.instancia?.observador = null
@@ -1413,8 +1448,8 @@ class MainActivity : Activity(), NodoService.Observador {
     override fun onCanal(ocupado: Boolean) { ui.post {
         // Verde: puedes hablar. Ámbar: hay alguien. Es la única disciplina que
         // existe en un canal simplex, así que tiene que verse de un vistazo.
-        bPtt.setBackgroundColor(
-            if (ocupado) Color.parseColor("#ff8f00") else Color.parseColor("#2e7d32"))
+        if (NodoService.instancia?.transmitiendo == true) return@post   // manda el TX
+        fondoPtt.modo = if (ocupado) PttFondo.Modo.OCUPADO else PttFondo.Modo.LIBRE
         bPtt.text = if (ocupado) "CANAL OCUPADO" else "PULSAR PARA HABLAR"
     } }
 
@@ -1433,20 +1468,29 @@ class MainActivity : Activity(), NodoService.Observador {
      *  varias ubicaciones enlazadas, el PTT puede estar cogido. Se enseña de
      *  quién en vez de dejar un botón que no responde y no se sabe por qué. */
     override fun onPtt(estado: Int, quien: String?) { ui.post {
+        if (NodoService.instancia?.transmitiendo == true) return@post   // manda el TX
         if (estado == Nodo.PTT_DE_OTRO) {
-            bPtt.setBackgroundColor(Color.parseColor("#ff8f00"))
+            fondoPtt.modo = PttFondo.Modo.OCUPADO
             bPtt.text = if (quien.isNullOrBlank()) "OCUPADO" else "HABLA $quien"
             tQuien.text = if (quien.isNullOrBlank()) "" else "◀ $quien"
         } else if (estado == Nodo.PTT_LIBRE) {
-            bPtt.setBackgroundColor(Color.parseColor("#2e7d32"))
+            fondoPtt.modo = PttFondo.Modo.LIBRE
             bPtt.text = "PULSAR PARA HABLAR"
         }
     } }
 
     override fun onTx(transmitiendo: Boolean) { ui.post {
-        bPtt.setBackgroundColor(
-            if (transmitiendo) Color.parseColor("#c62828") else Color.parseColor("#2e7d32"))
-        bPtt.text = if (transmitiendo) "TRANSMITIENDO" else "PULSAR PARA HABLAR"
+        ui.removeCallbacks(relojTx)
+        if (transmitiendo) {
+            fondoPtt.modo = PttFondo.Modo.TX
+            fondoPtt.frac = 1f
+            bPtt.text = "TRANSMITIENDO   0s"
+            ui.post(relojTx)
+        } else {
+            fondoPtt.modo = PttFondo.Modo.LIBRE
+            fondoPtt.frac = 1f          // el depósito vuelve a estar lleno
+            bPtt.text = "PULSAR PARA HABLAR"
+        }
     } }
 
     /** LA RUEDA: qué se ha dicho, en qué orden y cuánto ha durado.

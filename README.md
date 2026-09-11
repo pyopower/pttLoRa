@@ -340,7 +340,7 @@ arrancan con un `systemd` de diez líneas.
 # reflector
 tools/nodovirtual.py --escucha 4461
 # nodo de datos (cuelga del reflector)
-tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461
+tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461 --exige-indicativo
 # igate a APRS-IS
 tools/igate.py --conf igate.conf
 # relevo de mando (el --secreto no es opcional si lo abres a internet)
@@ -348,6 +348,16 @@ tools/mandovirtual.py --nodos 4464 --operador 4471 --secreto ~/.pttlora-secreto 
 # censo de la red (cuelga del reflector)
 tools/registro.py --reflector 127.0.0.1:4461 --fichero registro.json
 ```
+
+⚠️ **Lo que entra por el nodo de datos SALE POR LA ANTENA de una celda**, con
+el indicativo que diga quien habla — y el de un cliente que no se identifica era
+`ANON`. Por eso `--exige-indicativo`: **para transmitir** hace falta algo con
+forma de indicativo (UIT, más sufijos `-1` a `-99` para varios cacharros, y
+generoso con el nombre del operador, `/P` o un prefijo de otro país); **para
+escuchar**, nada. La asimetría es el punto: oír no hace emitir a la antena de
+nadie. No es autenticación —cualquiera puede teclear uno válido— pero la
+estación que transmite tiene un titular, y eso es lo mínimo. Banco:
+`tools/pruebaindicativo.py`.
 
 ⚠️ **El relevo de mando (4464) es el único de los cinco que tiene que estar
 abierto a internet y que MANDA en un nodo entero**, así que lleva secreto

@@ -184,6 +184,24 @@ class AudioEngine(private val ctx: android.content.Context,
 
     fun startCapture(): Boolean {
         if (capturing) return true
+        /* ⚠️ NO SE PUEDE ARRANCAR CON EL HILO ANTERIOR TODAVIA VIVO.
+           `stopCapture` con cola deja el hilo leyendo hasta 250 ms mas y suelta
+           su referencia (`recThread = null`), asi que sin esto un PTT pulsado
+           otra vez dentro de esa ventana —un doble toque rapido— encontraba
+           `capturing == false`, arrancaba un SEGUNDO hilo sobre el MISMO
+           AudioRecord, y ademas revivia al primero (su bucle mira `capturing`).
+           Dos hilos leyendo, y el primero que termina llama a `r.stop()`
+           mientras el otro esta dentro de `read()`: IllegalStateException y la
+           app se cierra. Reportado por el usuario el 11-sep-2026.
+           Aqui se corta la cola y se espera a que salga: son unos milisegundos,
+           porque el bucle termina en cuanto se le quita el plazo. */
+        saliente?.let { h ->
+            if (h.isAlive) {
+                hastaCuando = 0L
+                h.join(500)
+            }
+        }
+        saliente = null
         if (!preparaMicro()) return false
         val r = record ?: return false
         /* ⚠️ EL AGC **NO** SE REINICIA EN CADA PULSACION.
@@ -241,6 +259,33 @@ class AudioEngine(private val ctx: android.content.Context,
      *  cierre de la transmision —el ultimo lote y el FIN— se hace DESPUES,
      *  desde el propio hilo de captura, con `alTerminar`. Nadie se queda
      *  bloqueado esperando. */
+    /** El hilo de captura que se esta yendo con la cola puesta. Se guarda para
+     *  que un PTT nuevo pueda esperarlo en vez de pisarlo. */
+    @Volatile private var saliente: Thread? = null
+
+    /** REANUDAR en vez de abrir otra vez, si la cola del cierre sigue viva.
+     *
+     *  Es el *hang time* de una emisora, y aqui sale gratis: la cola de 250 ms
+     *  ya mantiene el micro leyendo, asi que un PTT pulsado dentro de esa
+     *  ventana no necesita arrancar nada — basta con quitarle el plazo al hilo
+     *  que ya esta corriendo. Cero audio de mas, cero hilos nuevos, y la
+     *  transmision sigue siendo LA MISMA: ni FIN ni INICIO por medio.
+     *
+     *  Devuelve false si ya no hay nada que reanudar (el hilo salio, o nunca
+     *  hubo); entonces el que llama abre una nueva como siempre. */
+    fun reanudaCaptura(): Boolean {
+        val h = saliente ?: return false
+        if (!h.isAlive) { saliente = null; return false }
+        alCerrar = null          // ya no se cierra: el aviso pendiente se anula
+        capturing = true         // el bucle del hilo mira esto y sigue
+        recThread = h
+        saliente = null
+        // Ojo si el hilo estaba justo saliendo: se comprueba despues de
+        // rearmarlo, que es cuando la respuesta ya no puede cambiar.
+        if (!h.isAlive) { recThread = null; capturing = false; return false }
+        return true
+    }
+
     fun stopCapture(colaMs: Int = 0, alTerminar: (() -> Unit)? = null) {
         val hilo = recThread
         alCerrar = alTerminar
@@ -260,7 +305,10 @@ class AudioEngine(private val ctx: android.content.Context,
             alCerrar = null
             f?.invoke()
         } else {
-            recThread = null            // el hilo se cierra y avisa el solo
+            // El hilo se cierra y avisa el solo, pero NO se pierde de vista:
+            // `startCapture` tiene que poder esperarlo. Ver la nota de alli.
+            saliente = hilo
+            recThread = null
         }
     }
 

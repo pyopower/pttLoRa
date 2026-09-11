@@ -482,6 +482,17 @@ class NodoService : Service() {
     private var loteTramas = 0
     private var t0Tx = 0L
 
+    /** Cuándo empezó la transmisión en curso (0 = no hay). Lo mira la pantalla
+     *  para pintar el tiempo consumido: el PTT puede haberse abierto desde la
+     *  tecla física o con la Activity en segundo plano, así que la hora buena
+     *  es la del servicio y no la de quien pinta.
+     *
+     *  Vale tambien durante el margen de reanudacion (`cerrando`): el canal
+     *  sigue tomado y el TOT sigue corriendo, asi que el contador no se puede
+     *  parar justo en el momento en que aun se puede volver a hablar sin
+     *  soltar el canal. */
+    val inicioTx: Long get() = if (transmitiendo || cerrando) t0Tx else 0L
+
     override fun onCreate() {
         super.onCreate()
         instancia = this
@@ -1365,6 +1376,38 @@ class NodoService : Service() {
 
     fun tomaPtt() {
         if (transmitiendo || !hayPorDondeHablar()) return
+        /* ⚠️ DOBLE TOQUE RAPIDO: la transmision anterior puede seguir vaciando
+           su cola (`cerrando`), y entonces `transmitiendo` ya es false pero el
+           micro sigue abierto y hay un CMD_FIN pendiente de salir. Abrir otra
+           encima dejaba la anterior sin cerrar —el FIN del cierre viejo caia
+           sobre el stream NUEVO— y arrancaba un segundo hilo de captura, que
+           es lo que cerraba la app. Asi que primero se termina la de antes:
+           se corta la cola y se cierra AHORA, con su FIN y su linea de
+           registro, y solo despues se abre la nueva.
+           Se le pasa `cierraTx` otra vez a proposito: `stopCapture` sobrescribe
+           el aviso pendiente, y sin esto el cierre no lo haria nadie y el nodo
+           se quedaria con el PTT tomado hasta su TOT. */
+        if (cerrando) {
+            /* MARGEN AL SOLTAR (idea del usuario, 11-sep): si se vuelve a
+               pulsar dentro de la cola, se REANUDA la misma transmision en vez
+               de abrir otra. No se manda FIN ni INICIO, no se toca `t0Tx` —el
+               canal lleva tomado desde la primera pulsacion y el TOT tiene que
+               contarlo— y no se vuelve a mirar si el canal esta ocupado: ya es
+               nuestro. Es el hang time de una emisora, y sale gratis porque el
+               micro ya estaba leyendo. */
+            if (audio?.reanudaCaptura() == true) {
+                cerrando = false
+                tCerrando = 0L
+                transmitiendo = true
+                Vibra.buzz(this, 30)
+                observador?.onTx(true)
+                notifica("Transmitiendo")
+                return
+            }
+            // Ya no habia nada que reanudar: se cierra la anterior del todo
+            // —con su FIN— y se sigue abriendo una nueva.
+            audio?.stopCapture(0) { cierraTx() }
+        }
         if (canalOcupado) {
             observador?.onLog("canal ocupado" +
                 (ultimoQueHabla?.let { " ($it)" } ?: ""))
@@ -1421,7 +1464,10 @@ class NodoService : Service() {
         cerrando = true                    // las tramas de la cola aun cuentan
         tCerrando = System.currentTimeMillis()
         audio?.stopCapture(COLA_PTT_MS) { cierraTx() }
-        observador?.onTx(false)
+        /* ⚠️ El aviso de "ya no transmites" NO se da aqui, sino en `cierraTx`.
+           Durante la cola el canal SIGUE tomado y se puede reanudar, asi que
+           poner el boton en verde aqui era mentir durante 250 ms — y encima
+           parpadeaba en cada pulsacion. */
         notifica(if (enlazado) "Enlazado"
                  else if (datosEnlazado) "Solo datos"
                  else "Sin enlace")
@@ -1432,6 +1478,7 @@ class NodoService : Service() {
     private fun cierraTx() {
         if (!cerrando) return              // ya se cerro (o lo forzo el vigia)
         cerrando = false
+        observador?.onTx(false)            // ahora si: aqui acaba la transmision
         tCerrando = 0L
         // Lo que quede a medias se manda igual: cortar una sílaba por no
         // completar el lote se nota más que medio lote corto.
