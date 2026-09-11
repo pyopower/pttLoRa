@@ -19,7 +19,7 @@
 #define PROTO_MAGIC   0xA1        // 0xA0 | version 1
 // Version del firmware. Sale en el estado: es como se comprueba que una
 // actualizacion por radio ha entrado de verdad.
-#define VERSION       "1.51"
+#define VERSION       "1.52"
 
 #define MAX_PAYLOAD   200         // holgado para un lote de 960 ms a 1200 bps
 #define MAX_INDICATIVO 12
@@ -344,6 +344,32 @@ enum : uint8_t {
                          // lista del movil. Aparte del indicativo a proposito:
                          // el indicativo identifica la estacion por radio y
                          // cambia; el nombre identifica la placa y no.
+
+    /* RETO del canal de mando (v1.52). El relevo manda 32 caracteres hex —16
+     * bytes al azar, distintos en cada conexion— y el nodo contesta un EV_RETO
+     * con HMAC-SHA256(secreto, esos 32 caracteres tal cual), de el los 16
+     * primeros bytes, en hex. Sirve para que el 4464, que esta en Internet
+     * abierto, sea de quien tiene el secreto y no de cualquiera que se conecte.
+     *
+     * Tres decisiones, y el porque de cada una:
+     *
+     *  - **Hex y no binario.** Esto viaja en KISS, donde 0xC0 y 0xDB van
+     *    escapados. Un HMAC en crudo trae esos bytes una vez de cada ocho, asi
+     *    que el que lea la trama tiene que desescapar o se come respuestas
+     *    validas de vez en cuando — un fallo que aparece una de cada diez veces
+     *    y vuelve loco a cualquiera. En hex no puede pasar. Es el mismo motivo
+     *    por el que el MD5 de CMD_OTA_INI va en hex.
+     *  - **El secreto NUNCA viaja.** Ni al abrir el canal ni despues. Quien
+     *    escuche el TCP ve un reto y una respuesta que no le sirven para la
+     *    proxima conexion, porque el reto cambia.
+     *  - **Solo se contesta por el canal de mando.** Por el USB, el BLE o el
+     *    WiFi de casa se ignora: si no, cualquiera que alcance al nodo lo
+     *    convierte en una maquina de firmar retos ajenos.
+     *
+     * El secreto se compila; NO esta en el repositorio (ver `secreto.h`). Un
+     * firmware sin secreto sencillamente no contesta, y eso se ve en el estado
+     * como `secreto=no`. */
+    CMD_RETO   = 0x19,   // [32 caracteres hex]
 };
 
 /* Origen de la posicion, y CADA UNO SE EMITE DE UNA MANERA (v1.36).
@@ -424,6 +450,8 @@ enum : uint8_t {
                         // aire: aqui puede estar el canal libre y aun asi no
                         // tocarte hablar porque otro del grupo tiene el PTT.
     EV_RED    = 0x8A,   // texto: modo de red, IP, clientes conectados, enlace
+    EV_RETO   = 0x8B,   // [32 caracteres hex]  respuesta al reto del mando.
+                        // Ver CMD_RETO, que es donde esta explicado.
     EV_LOG    = 0x8F,   // texto suelto para depurar
 };
 

@@ -47,11 +47,31 @@
 #include <esp_system.h>
 #include <NimBLEDevice.h>
 #include <sys/select.h>
+#include <mbedtls/md.h>
 #ifdef PLACA_TBEAM
   #define XPOWERS_CHIP_AXP2101
   #include <XPowersLib.h>
 #endif
 #include "protocolo.h"
+
+/* EL SECRETO DEL CANAL DE MANDO, que NO vive en el repositorio.
+   `secreto.h` esta en el .gitignore; la plantilla que si se sube es
+   `secreto-ejemplo.h`. Sin ese fichero esto compila igual y el nodo se queda
+   sin secreto: no contesta a los retos y lo dice en su estado. Que un clon del
+   proyecto compile a la primera importa mas que forzar a nadie a tener uno. */
+/* Y con `-DSIN_SECRETO` se compila A PROPOSITO sin el, aunque el fichero este
+   aqui: es como se hacen los binarios que se PUBLICAN. Hace falta porque el
+   repositorio publico lleva un flasher web con los .bin dentro, y un binario
+   con el secreto en GitHub Pages es el secreto en GitHub Pages —se saca con
+   `strings`—. Los entornos `*-publico` de platformio.ini ya lo ponen. */
+#if defined(__has_include) && !defined(SIN_SECRETO)
+#  if __has_include("secreto.h")
+#    include "secreto.h"
+#  endif
+#endif
+#ifndef MANDO_SECRETO
+#define MANDO_SECRETO ""
+#endif
 
 /* QUE PLACA ES ESTA. Va en el estado y, sobre todo, **va dentro del binario**:
    `ota_bt.py` lo busca en el fichero antes de mandarlo y se niega a flashear el
@@ -2041,6 +2061,11 @@ static String red_texto()
     }
     r += " clientes=" + String(cuenta_clientes());
     r += pedir_codigo ? " codigo=si" : " codigo=no";
+    /* Para saber, SIN mirar la version ni el binario, si esta placa lleva
+       secreto del canal de mando. Es lo que se mira durante un despliegue:
+       hasta que los tres nodos no digan `secreto=si` no se le puede pedir al
+       relevo que lo exija. No dice cual es, solo si lo hay. */
+    r += (sizeof(MANDO_SECRETO) > 1) ? " secreto=si" : " secreto=no";
     r += " ptt=";
     r += (ptt_de >= 0) ? indicativo_de(ptt_de) : "libre";
     /* Los enlaces, uno a uno: en una red de varias ubicaciones lo que hace
@@ -2396,6 +2421,38 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
     case CMD_ESTADO:
         manda_estado();
         break;
+
+    /* El reto del relevo de mando. Ver CMD_RETO en protocolo.h, que es donde
+       esta el porque de cada decision. */
+    case CMD_RETO: {
+        /* SOLO por el canal de mando. Por el cable, el BLE o el WiFi de casa
+           esto se ignora: contestar retos ajenos por cualquier tubo convertiria
+           al nodo en una maquina de firmar para quien le alcance. */
+        if (mando_tubo < 0 || idx != mando_tubo) break;
+        if (sizeof(MANDO_SECRETO) <= 1) { log_txt("reto sin secreto: no contesto"); break; }
+        if (n != 32) break;
+
+        uint8_t mac[32];
+        const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+        if (!md) break;
+        if (mbedtls_md_hmac(md, (const uint8_t *)MANDO_SECRETO,
+                            sizeof(MANDO_SECRETO) - 1, d, n, mac) != 0) break;
+
+        /* Los 16 primeros bytes, en hex. Con 128 bits de respuesta sobra: lo
+           que hay que impedir es que alguien acierte, no comprimir nada. */
+        /* `HEX` a secas NO se puede usar de nombre: Print.h de Arduino lo
+           tiene cogido como macro (`#define HEX 16`) y el error que sale
+           —"expected unqualified-id before numeric constant"— no apunta a esto
+           por ningun lado. */
+        static const char HEXDIG[] = "0123456789abcdef";
+        uint8_t resp[32];
+        for (int i = 0; i < 16; i++) {
+            resp[i * 2]     = (uint8_t)HEXDIG[mac[i] >> 4];
+            resp[i * 2 + 1] = (uint8_t)HEXDIG[mac[i] & 0x0F];
+        }
+        kiss_a(tubos[idx], EV_RETO, resp, sizeof resp);
+        break;
+    }
 
     case CMD_CONFIRMA:
         // Si se llega aqui es que ya estaba autorizado (o viene por USB). Con

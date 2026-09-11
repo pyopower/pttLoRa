@@ -343,11 +343,33 @@ tools/nodovirtual.py --escucha 4461
 tools/nododatos.py --escucha 4460 --reflector 127.0.0.1:4461
 # igate a APRS-IS
 tools/igate.py --conf igate.conf
-# relevo de mando
-tools/mandovirtual.py --nodos 4464 --operador 4471
+# relevo de mando (el --secreto no es opcional si lo abres a internet)
+tools/mandovirtual.py --nodos 4464 --operador 4471 --secreto ~/.pttlora-secreto --exige
 # censo de la red (cuelga del reflector)
 tools/registro.py --reflector 127.0.0.1:4461 --fichero registro.json
 ```
+
+⚠️ **El relevo de mando (4464) es el único de los cinco que tiene que estar
+abierto a internet y que MANDA en un nodo entero**, así que lleva secreto
+compartido. Sin él, cualquiera que encuentre el puerto ocupa una de las cuatro
+ranuras —y cuatro conexiones calladas dejan tu celda sin forma de
+administrarla—, o se sienta en la ranura haciéndose pasar por tu nodo y recibe
+en claro la clave del WiFi la próxima vez que la teclees. Pasó de verdad: 124
+conexiones de un EC2 en una noche.
+
+Cómo funciona: el relevo manda un reto al azar y el nodo contesta
+`HMAC-SHA256(secreto, reto)`. **El secreto no viaja nunca**, y cambia el reto en
+cada conexión. El del nodo se compila desde `firmware/src/secreto.h`, que **no
+está en este repositorio**: copia `secreto-ejemplo.h`, pon el tuyo y compila. Un
+firmware sin ese fichero compila igual, dice `secreto=no` en su estado y
+sencillamente no puede usar un relevo que exija secreto.
+
+⚠️ **Y si publicas binarios tuyos, compílalos con los entornos `-publico`**
+(`pio run -e lora32-publico`), que llevan `-DSIN_SECRETO`: un `.bin` compilado
+con secreto lo regala a quien lo descargue, basta un `strings`. Para eso está
+`tools/compruebasecreto.sh`. El banco `tools/pruebapuerta.py` comprueba las tres
+situaciones (nodo bueno, escáner callado, y el despliegue a medias donde aún no
+se exige).
 
 Para apuntar a tu servidor: en la app, **Ajustes → Enlace con otros nodos** (y
 **Camino de datos** para el 4460); desde la consola, `tools/nodo.py enlace
