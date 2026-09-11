@@ -1,33 +1,31 @@
 # PTT LoRa
 
-**Hablar por voz con un grupo donde no hay cobertura de nada.** Una placa LoRa
-de unos 30 € y tu móvil Android: sin operador, sin cuota, sin internet y sin
-repetidor de nadie.
+**Voz por LoRa en una red inspirada de manera simplificada en Tetra.** Una placa LoRa
+de unos 20-30 € y tu móvil Android que hace de interface.Opcionalmente también envía tu posicion a aprs-fi.
 
-**Y la cobertura crece añadiendo placas.** Cada celda que pones —la misma placa,
-en alto— extiende la red, y se encadenan por radio o por internet. El límite no
-es la potencia: es cuántas quieras poner, y valen 30 € cada una.
+**La cobertura crece añadiendo placas.** Cada celda que pones —la misma placa,
+en alto— extiende la red, y se encadenan por radio o por internet (opcionalmente cuándo una celda no escucha otra) . El límite no
+es la potencia, la red crece exponencialmente interconectandose entre si.
 
-Para **radioaficionados con licencia**: va en 70 cm, sin cifrar, y cada estación
+Está desarrollado para **radioaficionados con licencia**: funciona en la banda de 70 cm, sin cifrar, y cada estación
 se identifica con su indicativo.
 
 **Está funcionando, no es una idea.** Voz real entre móviles a través de la
-radio, y **3,2 km sin visión directa con 50 mW y la antena de la caja**, sin
-perder un solo paquete.
+radio, y **3,2 km sin visión directa con 50 mW y la antena de fábrica**, sin
+perder un solo paquete en las pruebas.
 
 ---
 
 # Empezar
 
-**Tres pasos. Diez minutos.**
+**Dos pasos. Diez minutos.**
 
-### 1 · La placa
+###  👉· La placa
 
 Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, en la **versión de 433 MHz**
-(ESP32 + SX1278). ⚠️ Las de 868/915 llevan otro chip y **no sirven**: es lo
-único que no se arregla con software.
+(ESP32 + SX1278).
 
-### 2 · Grábale el firmware
+### 1 · Grábale el firmware
 
 👉 **https://pyopower.github.io/pttLoRa/** — desde el navegador, sin instalar
 nada. Conectas la placa por USB, pulsas el botón de tu modelo y listo.
@@ -37,7 +35,7 @@ nada. Conectas la placa por USB, pulsas el botón de tu modelo y listo.
 > ¿Prefieres a mano? [Binarios sueltos](https://github.com/pyopower/pttLoRa/releases/latest)
 > y las órdenes de `esptool` más abajo.
 
-### 3 · Instala la app
+### 2 · Instala la app en tu móvil
 
 | descarga | para |
 |---|---|
@@ -51,8 +49,8 @@ está en tu red. Y ya puedes hablar.
 ⚠️ Sin indicativo el nodo sale como `NOCALL` y no debe transmitir: **esto es
 para radioaficionados con licencia**, en 70 cm y sin cifrar.
 
-**No necesitas ningún servidor.** Ya hay uno funcionando y la app apunta ahí de
-fábrica; sólo hace falta el tuyo si quieres una red aparte.
+**No necesitas ningún servidor para el enlace opcional de células por internet.** Ya hay uno funcionando y la app apunta ahí de
+fábrica si activas la opción; sólo hace falta el tuyo si quieres una red aparte.
 
 ---
 
