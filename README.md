@@ -1,7 +1,7 @@
 # PTT LoRa
 
 **Voz por LoRa en una red inspirada de manera simplificada en Tetra.** Una placa LoRa
-de unos 20-30 € y tu móvil Android que hace de interface.Opcionalmente también envía tu posicion a aprs-fi.
+de unos 20-30 € y tu móvil o POC Android que hace de interface.Opcionalmente también envía tu posicion a aprs-fi.
 
 **La cobertura crece añadiendo placas.** Cada celda que pones —la misma placa,
 en alto— extiende la red, y se encadenan por radio o por internet (opcionalmente cuándo una celda no escucha otra) . El límite no
