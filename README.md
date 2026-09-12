@@ -105,6 +105,10 @@ levanta su propia red si se le pide.
 **La antena importa más que la placa.** Las medidas de arriba son con una antena
 micro SMA de las que vienen en la caja; con algo decente en alto, otra historia.
 
+**Un empujoncito extra?? Las plaquitas LoRa funcionan de manera excelente solas pero en algun caso te puede interesar: Hay varios amplificadores LoRa en el mercado que pueden catapultar esos mW de las plaquitas a uno o unos pocos watios e incluso con previo en recepcion para compensar si tienes una tirada de cable de antena exterior larga.
+Ejemplo de ampli barato con buenos resultados: https://a.aliexpress.com/_Ew65GwK
+Cuidado al elegir otros tipos/modelos no todos sirven para LoRa y transmisiones digitales.
+
 ---
 
 ## Cómo funciona
