@@ -22,8 +22,13 @@ perder un solo paquete en las pruebas.
 
 ###  👉· La placa
 
-Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, en la **versión de 433 MHz**
+Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, ojo, elige siempre la **versión de 433 MHz**
 (ESP32 + SX1278).
+https://a.aliexpress.com/_ExGKbhC
+https://amzn.eu/d/0i5hTx0X
+
+https://a.aliexpress.com/_EI7hfvo
+https://amzn.eu/d/01GfZDEd
 
 ### 1 · Grábale el firmware
 
