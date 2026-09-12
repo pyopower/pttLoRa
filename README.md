@@ -24,11 +24,12 @@ perder un solo paquete en las pruebas.
 
 Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, ojo, elige siempre la **versión de 433 MHz**
 (ESP32 + SX1278).
-https://a.aliexpress.com/_ExGKbhC
-https://amzn.eu/d/0i5hTx0X
 
-https://a.aliexpress.com/_EI7hfvo
-https://amzn.eu/d/01GfZDEd
+| <a href="https://a.aliexpress.com/_ExGKbhC"><img src="docs/img/lora32.jpg" width="260" alt="LilyGO LoRa32 v2.1"></a> | <a href="https://a.aliexpress.com/_EI7hfvo"><img src="docs/img/tbeam.jpg" width="260" alt="LilyGO T-Beam v1.2"></a> |
+|:--:|:--:|
+| **LilyGO LoRa32 v2.1**<br>[AliExpress](https://a.aliexpress.com/_ExGKbhC) · [Amazon](https://amzn.eu/d/0i5hTx0X) | **LilyGO T-Beam v1.2**<br>[AliExpress](https://a.aliexpress.com/_EI7hfvo) · [Amazon](https://amzn.eu/d/01GfZDEd) |
+
+*Fotos del fabricante, orientativas: en la tienda hay que elegir la variante de **433 MHz**.*
 
 ### 1 · Grábale el firmware
 
