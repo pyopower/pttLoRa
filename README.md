@@ -10,8 +10,7 @@ es la potencia, la red crece exponencialmente interconectandose entre si.
 Está desarrollado para **radioaficionados con licencia**: funciona en la banda de 70 cm, sin cifrar, y cada estación
 se identifica con su indicativo.
 
-**Está funcionando, no es una idea.** Voz real entre móviles a través de la
-radio, y **3,2 km sin visión directa con 50 mW y la antena de fábrica**, sin
+**Está funcionando, no es una idea.** Voz real entre móviles (hace solo de interface) a través de LoRa, y **3,2 km sin visión directa con 50 mW y la antena de fábrica**, sin
 perder un solo paquete en las pruebas.
 
 ---
