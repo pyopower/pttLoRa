@@ -57,6 +57,12 @@ class MainActivity : Activity(), NodoService.Observador {
     private lateinit var tLog: TextView
     private lateinit var bPtt: Button
     private lateinit var rueda: android.widget.LinearLayout
+    private lateinit var panel: android.widget.LinearLayout
+    private lateinit var tTitulo: TextView
+    private lateinit var bPlegar: Button
+    /** Lo último que dijo `onEnlace`, para que el título lo cuente cuando el
+     *  panel está plegado y para desplegarlo si el enlace se cae. */
+    private var enlaceOk = false
     private val ui = Handler(Looper.getMainLooper())
     private var dialogoCodigo = false
 
@@ -86,6 +92,45 @@ class MainActivity : Activity(), NodoService.Observador {
         }
     }
 
+    /** ¿La aguja se está moviendo ahora mismo? Para no montar dos relojes: el
+     *  S-metro recibe una medida por lote —varias por segundo— y cada una
+     *  volvería a lanzar el repintado si no se mirara esto. */
+    private var metroCorre = false
+
+    /** Mueve la aguja del S-metro a 30 pasos por segundo. **Se para solo**: en
+     *  cuanto la aguja llega a su sitio y el índice de pico ha bajado, esto
+     *  deja de repintar y no gasta nada hasta la siguiente medida. */
+    private val relojMetro = object : Runnable {
+        override fun run() {
+            if (fondoPtt.pasoMetro()) { ui.postDelayed(this, 33); return }
+            metroCorre = false
+        }
+    }
+
+    /** Abre o pliega el panel de abajo y lo recuerda. */
+    private fun pliega(abierto: Boolean) {
+        panel.visibility = if (abierto) View.VISIBLE else View.GONE
+        bPlegar.text = if (abierto) "▴" else "▾"
+        prefs.panelAbierto = abierto
+        pintaTitulo()
+    }
+
+    /** Con el panel plegado, el título es lo único que puede avisar de que no
+     *  hay enlace — y tocarlo lo despliega para ver por qué. */
+    private fun pintaTitulo() {
+        val plegado = panel.visibility != View.VISIBLE
+        tTitulo.text = if (plegado && !enlaceOk) "PTT LoRa · sin enlace"
+                       else "PTT LoRa"
+        tTitulo.setTextColor(if (plegado && !enlaceOk) Color.GRAY
+                             else resources.getColor(R.color.texto))
+    }
+
+    private fun arrancaMetro() {
+        if (metroCorre) return
+        metroCorre = true
+        ui.post(relojMetro)
+    }
+
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         prefs = Prefs(this)
@@ -99,6 +144,15 @@ class MainActivity : Activity(), NodoService.Observador {
         Nombres.arranca(this)
         Nombres.alLlegar = { ui.post { pintaRueda() } }
         pintaRueda()
+
+        panel = findViewById(R.id.panel)
+        tTitulo = findViewById(R.id.titulo)
+        bPlegar = findViewById(R.id.plegar)
+        pliega(prefs.panelAbierto)
+        bPlegar.setOnClickListener { pliega(panel.visibility != View.VISIBLE) }
+        // Y el título también abre: plegado es lo único que queda visible, y
+        // ahí es donde se lee "sin enlace".
+        tTitulo.setOnClickListener { if (panel.visibility != View.VISIBLE) pliega(true) }
 
         findViewById<Button>(R.id.ajustes).setOnClickListener { ajustes() }
         findViewById<Button>(R.id.salir).setOnClickListener { salir() }
@@ -123,6 +177,7 @@ class MainActivity : Activity(), NodoService.Observador {
         super.onResume()
         ui.removeCallbacks(vigilante)
         ui.post(vigilante)
+        arrancaMetro()          // si la aguja se quedó a medias, que termine
         NodoService.instancia?.let {
             it.observador = this
             /* Vale cualquiera de los dos caminos: con solo el de datos
@@ -154,6 +209,8 @@ class MainActivity : Activity(), NodoService.Observador {
         super.onPause()
         ui.removeCallbacks(relojTx)
         ui.removeCallbacks(vigilante)
+        ui.removeCallbacks(relojMetro)
+        metroCorre = false
         if (NodoService.instancia?.observador === this)
             NodoService.instancia?.observador = null
     }
@@ -455,6 +512,12 @@ class MainActivity : Activity(), NodoService.Observador {
             .setTitle("Ajustes · v" + BuildConfig.VERSION_NAME)
             .setView(v)
             .setNeutralButton("Registro") { _, _ -> registro() }
+            /* VOLVER sin guardar. Sólo cuando ya hay una configuración válida:
+               sin indicativo y sin nodo la app no puede hacer nada, y una
+               salida ahí dejaría una pantalla muerta. Lo único que se pierde
+               es el indicativo que se esté tecleando — lo demás (nodo, canal,
+               códec…) se guarda al elegirlo en su propio menú. */
+            .apply { if (prefs.listo) setNegativeButton("Volver", null) }
             .setPositiveButton("Guardar") { _, _ ->
                 prefs.indicativo = eInd.text.toString()
                 if (!prefs.listo) {
@@ -773,13 +836,21 @@ class MainActivity : Activity(), NodoService.Observador {
     private fun salir() {
         AlertDialog.Builder(this)
             .setTitle("Cerrar PTT LoRa")
-            .setMessage("Se suelta el nodo y dejas de recibir. Habrá que abrir " +
-                        "la app otra vez para volver a estar a la escucha.")
+            .setMessage("CERRAR suelta el nodo y dejas de recibir: habrá que " +
+                        "abrir la app otra vez para volver a estar a la " +
+                        "escucha.\n\nMINIMIZAR sólo quita la pantalla de en " +
+                        "medio — sigues enlazado, sigues oyendo, y la tecla " +
+                        "física del PTT sigue funcionando.")
             .setPositiveButton("Cerrar") { _, _ ->
                 NodoService.instancia?.desconecta()
                 stopService(Intent(this, NodoService::class.java))
                 if (Build.VERSION.SDK_INT >= 21) finishAndRemoveTask() else finish()
             }
+            /* MINIMIZAR y no `finish()`: cerrar la Activity dejaría el servicio
+               vivo igual —es de primer plano— pero perdería el estado de la
+               pantalla y volver costaría un arranque entero. `moveTaskToBack`
+               es exactamente lo que hace el botón de inicio del móvil. */
+            .setNeutralButton("Minimizar") { _, _ -> moveTaskToBack(true) }
             .setNegativeButton("Seguir", null)
             .show()
     }
@@ -1432,6 +1503,14 @@ class MainActivity : Activity(), NodoService.Observador {
         tEstado.text = if (conectado) "Enlazado · $detalle"
                        else "Sin enlace · $motivo · toca para reintentar"
         tEstado.setTextColor(if (conectado) Color.parseColor("#2e7d32") else Color.GRAY)
+        /* Si el enlace SE CAE con el panel plegado, se despliega solo: el
+           motivo es lo único que distingue "el nodo está apagado" de "lo tiene
+           otro móvil", y esconderlo justo cuando hace falta sería el peor
+           momento. Sólo en la caída: al arrancar la app aún no hay enlace y no
+           es una avería, es que todavía no ha conectado. */
+        if (enlaceOk && !conectado && panel.visibility != View.VISIBLE) pliega(true)
+        enlaceOk = conectado
+        pintaTitulo()
         /* Tocar el estado reintenta AHORA. El servicio ya reintenta solo cada
            pocos segundos, pero cuando uno acaba de encender el nodo no quiere
            esperar a la siguiente vuelta: sin este atajo, la unica salida
@@ -1464,6 +1543,13 @@ class MainActivity : Activity(), NodoService.Observador {
         }
     } }
 
+    /** EL S-METRO. Ver `SMetro`: aquí sólo se le pasa la medida y se arranca el
+     *  reloj de la aguja; el instrumento se dibuja dentro del fondo del PTT. */
+    override fun onSenal(rssi: Int) { ui.post {
+        fondoPtt.sMetro.mide(rssi)
+        arrancaMetro()
+    } }
+
     /** Arbitraje del micrófono: con varios usuarios en el mismo nodo, o con
      *  varias ubicaciones enlazadas, el PTT puede estar cogido. Se enseña de
      *  quién en vez de dejar un botón que no responde y no se sabe por qué. */
@@ -1482,11 +1568,18 @@ class MainActivity : Activity(), NodoService.Observador {
     override fun onTx(transmitiendo: Boolean) { ui.post {
         ui.removeCallbacks(relojTx)
         if (transmitiendo) {
+            /* Transmitiendo no se recibe, así que el S-metro no tendría nada
+               que enseñar: el mismo instrumento pasa a VATÍMETRO y marca los
+               milivatios a los que está puesta la placa. */
+            fondoPtt.sMetro.transmite(prefs.potencia)
+            arrancaMetro()
             fondoPtt.modo = PttFondo.Modo.TX
             fondoPtt.frac = 1f
             bPtt.text = "TRANSMITIENDO   0s"
             ui.post(relojTx)
         } else {
+            fondoPtt.sMetro.reposo()    // vuelve a ser S-metro, aguja a cero
+            arrancaMetro()
             fondoPtt.modo = PttFondo.Modo.LIBRE
             fondoPtt.frac = 1f          // el depósito vuelve a estar lleno
             bPtt.text = "PULSAR PARA HABLAR"
@@ -1524,7 +1617,13 @@ class MainActivity : Activity(), NodoService.Observador {
             /* El nombre, si se conoce. Nunca bloquea: si aún no ha llegado sale
                el indicativo a secas y la línea se repinta sola cuando llegue. */
             val nombre = Nombres.de(h.indicativo, prefs.nombresActivo)
-            val quien = if (nombre != null) "${h.indicativo} ${nombre}" else h.indicativo
+            /* ⚠️ EL NOMBRE, CORTO. La línea es monoespaciada y tiene que caber
+               entera en un móvil estrecho: con el nombre largo —"C31AG HONOR"—
+               la marca de por dónde vino se caía a una segunda línea y la lista
+               se leía fatal. Once caracteres es lo que cabe con la hora, la
+               duración y el dBm al lado. */
+            val quien = (if (nombre != null) "${h.indicativo} ${nombre}"
+                         else h.indicativo).take(11)
             /* La duración se escribe al CERRAR la transmisión, así que mientras
                alguien habla todavía no la hay: se dice que está en curso en vez
                de enseñar un 0,0 s que sería mentira. */
@@ -1537,14 +1636,16 @@ class MainActivity : Activity(), NodoService.Observador {
             val via = when {
                 h.yo -> if (h.porRf) "▶📻" else "▶🌐"
                 h.rssi == 126 -> "👥"
-                h.porRf && h.rssi < 126 -> "📻${h.rssi}"
+                // Con la unidad: un "-105" suelto no dice de qué habla.
+                h.porRf && h.rssi < 126 -> "📻${h.rssi} dBm"
                 h.porRf -> "📻"
                 else -> "🌐"
             }
             val t = TextView(this)
-            t.text = "%s  %-18s %6s  %s".format(
-                reloj.format(java.util.Date(h.cuando)), quien.take(18), dura, via)
-            t.textSize = 14f
+            t.text = "%s  %-11s %6s  %s".format(
+                reloj.format(java.util.Date(h.cuando)), quien, dura, via)
+            t.textSize = 13f
+            t.maxLines = 1
             t.typeface = android.graphics.Typeface.MONOSPACE
             t.setTextColor(when {
                 // Lo propio, en otro color: de un vistazo se ve dónde entraste.

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sin AppCompat a proposito: la app pesa 400 KB y no vamos a meter una
+         biblioteca entera para esto. Con dos temas y el calificador -night, la
+         eleccion del sistema sale gratis; forzar uno se hace sobrescribiendo la
+         configuracion en `attachBaseContext`, que existe desde API 17. -->
+    <style name="TemaPTT" parent="@android:style/Theme.DeviceDefault.Light">
+        <item name="android:windowBackground">@color/fondo</item>
+        <!-- Sin barra del sistema: la app se pone la suya en `principal.xml`,
+             con el nombre, el plegado y el de salir. Son 48dp que se le
+             devuelven a la lista de quién ha hablado. -->
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:textColor">@color/texto</item>
+    </style>
+</resources>

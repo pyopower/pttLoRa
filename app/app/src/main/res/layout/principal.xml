@@ -6,15 +6,37 @@
     android:background="@color/fondo"
     android:padding="12dp">
 
-    <TextView android:id="@+id/estado"
+    <!-- LA BARRA. Se quita la del sistema (ver temas.xml) y se pone ésta, que
+         además de el nombre lleva el plegado y el de salir: una barra propia
+         gana los 48dp de la del sistema y deja decidir qué va dentro.
+         El de SALIR hace falta de verdad: esto es un servicio en primer plano y
+         cerrar la pantalla NO lo para, así que sin un botón la única salida era
+         forzar el cierre desde Android. -->
+    <LinearLayout
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:textSize="16sp" android:text="Sin enlace" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <TextView android:id="@+id/titulo"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:textSize="20sp" android:textStyle="bold"
+            android:textColor="@color/texto"
+            android:text="PTT LoRa" />
+        <Button android:id="@+id/plegar"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:minWidth="0dp" android:textSize="16sp"
+            android:text="▾" />
+        <Button android:id="@+id/salir"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="Salir" />
+    </LinearLayout>
 
     <TextView android:id="@+id/quien"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:textSize="22sp" android:textStyle="bold"
         android:textColor="@color/texto"
-        android:paddingTop="8dp" android:paddingBottom="8dp" />
+        android:paddingTop="4dp" android:paddingBottom="8dp" />
 
     <!-- El PTT sigue siendo lo más grande de la pantalla —se usa a ciegas, con
          el móvil en la mano y sin mirar— pero ya no se lo come todo: debajo va
@@ -25,6 +47,8 @@
         android:layout_weight="5"
         android:textSize="34sp" android:textStyle="bold"
         android:textColor="#ffffff"
+        android:gravity="bottom|center_horizontal"
+        android:paddingBottom="16dp"
         android:text="PTT" />
 
     <!-- ÚLTIMOS EN HABLAR. Sin balizas a propósito: una baliza no es alguien
@@ -40,24 +64,23 @@
         android:layout_width="match_parent" android:layout_height="0dp"
         android:layout_weight="3" />
 
-    <TextView android:id="@+id/log"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:textSize="12sp" android:textColor="@color/texto_flojo"
-        android:paddingTop="6dp" android:maxLines="2" />
-
-    <!-- Ajustes y Salir juntos. El de salir hace falta de verdad: esto es un
-         servicio en primer plano y cerrar la pantalla NO lo para, asi que sin
-         un boton la unica salida era forzar el cierre desde Android. -->
-    <LinearLayout
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal">
+    <!-- EL PANEL, plegable con el ▾ de la barra. Aquí dentro va todo lo que se
+         mira UNA VEZ —con qué nodo se ha enlazado, qué versión, el último
+         aviso— y no mientras se habla; plegado, ese sitio se lo queda la rueda,
+         que sí se mira. Se recuerda plegado o abierto entre arranques. -->
+    <LinearLayout android:id="@+id/panel"
+        android:orientation="vertical"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <TextView android:id="@+id/estado"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:paddingTop="6dp"
+            android:textSize="16sp" android:text="Sin enlace" />
+        <TextView android:id="@+id/log"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textSize="12sp" android:textColor="@color/texto_flojo"
+            android:paddingTop="6dp" android:maxLines="2" />
         <Button android:id="@+id/ajustes"
-            android:layout_width="0dp" android:layout_weight="3"
-            android:layout_height="wrap_content"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Ajustes" />
-        <Button android:id="@+id/salir"
-            android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="Salir" />
     </LinearLayout>
 </LinearLayout>

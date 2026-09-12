@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="TemaPTT" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:windowBackground">@color/fondo</item>
+        <!-- Sin barra del sistema: la app se pone la suya en `principal.xml`,
+             con el nombre, el plegado y el de salir. Son 48dp que se le
+             devuelven a la lista de quién ha hablado. -->
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:textColor">@color/texto</item>
+    </style>
+</resources>

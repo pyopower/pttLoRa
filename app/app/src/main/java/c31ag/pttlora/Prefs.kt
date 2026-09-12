@@ -119,6 +119,13 @@ class Prefs(ctx: Context) {
         get() = p.getString("nodo", "") ?: ""
         set(v) = p.edit().putString("nodo", v).apply()
 
+    /** ¿Está abierto el panel de abajo (estado, último aviso y Ajustes)? Se
+     *  recuerda: quien lo pliega para dejarle sitio a la rueda no quiere
+     *  volver a plegarlo en cada arranque. */
+    var panelAbierto: Boolean
+        get() = p.getBoolean("panel_abierto", true)
+        set(v) = p.edit().putBoolean("panel_abierto", v).apply()
+
     var canal: Int
         get() = p.getInt("canal", 1)
         set(v) = p.edit().putInt("canal", v.coerceIn(0, 255)).apply()

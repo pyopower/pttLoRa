@@ -109,6 +109,10 @@ class NodoService : Service() {
         fun onEnlace(conectado: Boolean, detalle: String)
         fun onCanal(ocupado: Boolean)
         fun onQuienHabla(indicativo: String?, rssi: Int)
+        /** Medida de señal del aire, lote a lote, para el S-metro de la
+         *  pantalla. 126/127 significan "esto no vino por la antena" y ahí no
+         *  hay nada que medir: la aguja se suelta. */
+        fun onSenal(rssi: Int)
         /** Arbitraje del micrófono: PTT_LIBRE / PTT_TUYO / PTT_DE_OTRO. */
         fun onPtt(estado: Int, quien: String?)
         fun onTx(transmitiendo: Boolean)
@@ -335,6 +339,13 @@ class NodoService : Service() {
                     if (lote.rssi < 126) {
                         if (rxRssiMin >= 126 || lote.rssi < rxRssiMin) rxRssiMin = lote.rssi
                         if (rxRssiMax >= 126 || lote.rssi > rxRssiMax) rxRssiMax = lote.rssi
+                        /* LOTE A LOTE, que es lo que hace que la aguja se
+                           mueva mientras el otro habla en vez de clavarse en
+                           el valor del primer instante. Aquí el lote ya es el
+                           de radio: si la misma trama vino por los dos
+                           caminos, `encaja` deja la de la antena, que es la
+                           que trae la medida. */
+                        observador?.onSenal(lote.rssi)
                     }
                     /* El INICIO puede haber llegado por Internet —llega antes—
                        y haber pintado 🌐 aunque la voz venga por la antena. En
@@ -1058,6 +1069,7 @@ class NodoService : Service() {
                 if (!canalOcupado) {
                     ultimoQueHabla = null
                     observador?.onQuienHabla(null, 0)
+                    observador?.onSenal(127)
                 }
             }
             Nodo.EV_INICIO -> if (p.size >= 8) {
@@ -1282,6 +1294,7 @@ class NodoService : Service() {
                 ultimoQueHabla = ind
                 apuntaHablante(ind, rssi)
                 observador?.onQuienHabla(ind, rssi)
+                observador?.onSenal(rssi)
                 apunta("▼ %s · %s".format(ind, comoLlego(rssi)))
                 /* Empieza otro: lo que quedara de la transmision anterior sobra
                    —si alguien pisa, se oye al que entra, no una mezcla—. Y este
@@ -1331,6 +1344,7 @@ class NodoService : Service() {
         }
         rxQuien = null
         finVisto = 0L
+        observador?.onSenal(127)           // se acabó: la aguja vuelve a cero
         synchronized(ventana) { ventana.clear(); vSiguiente = 1; vMayor = 0 }
     }
 

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Modo CLARO. La versión oscura está en values-night/, y Android elige sola
+     según el sistema; si el usuario fuerza uno, MainActivity sobrescribe la
+     configuración antes de inflar (ver `attachBaseContext`). -->
+<resources>
+    <color name="fondo">#FAFAFA</color>
+    <color name="texto">#111111</color>
+    <color name="texto_flojo">#5F6368</color>
+    <color name="separador">#22000000</color>
+</resources>

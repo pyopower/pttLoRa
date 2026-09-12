@@ -41,6 +41,15 @@ class PttFondo : Drawable() {
     private val borde = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val rect = RectF()
     private val camino = Path()
+    private val ventana = RectF()
+
+    /** EL S-METRO. Vive aquí dentro y no en una vista aparte a propósito: el
+     *  PTT es un `Button` normal con este `Drawable` de fondo, y así sigue
+     *  siéndolo — el `OnTouchListener`, la tecla física y el manos libres no se
+     *  enteran de que ahora hay un instrumento pintado encima. Una vista
+     *  flotando por delante habría que hacerla transparente a los toques, que
+     *  es justo la clase de arreglo que se rompe en algún móvil raro. */
+    val sMetro = SMetro()
 
     var modo: Modo = Modo.LIBRE
         set(v) {
@@ -88,9 +97,32 @@ class PttFondo : Drawable() {
             )
             canvas.restoreToCount(save)
         }
+
+        /* EL INSTRUMENTO, SIEMPRE PUESTO. No sólo mientras entra voz: una
+           esfera con la aguja en reposo es lo que se ve en una emisora
+           encendida, y que aparezca y desaparezca da un salto feo. Se limita su
+           anchura a poco más del doble de su altura: en una tableta, un medidor
+           de un palmo de ancho y dos dedos de alto no parece un instrumento,
+           parece una regla. */
+        run {
+            val alto = rect.height() * 0.44f
+            val ancho = Math.min(rect.width() * 0.94f, alto * 2.3f)
+            val cx = rect.centerX()
+            val arriba = rect.top + rect.height() * 0.07f
+            ventana.set(cx - ancho / 2f, arriba, cx + ancho / 2f, arriba + alto)
+            sMetro.dibuja(canvas, ventana)
+        }
+
         borde.color = linea
         borde.strokeWidth = 2f
         canvas.drawPath(camino, borde)
+    }
+
+    /** Un paso de la aguja. Devuelve si hace falta seguir repintando. */
+    fun pasoMetro(): Boolean {
+        val sigue = sMetro.paso()
+        if (sigue) invalidateSelf()
+        return sigue
     }
 
     override fun setAlpha(alpha: Int) {}

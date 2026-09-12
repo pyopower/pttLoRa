@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Modo OSCURO. No es el claro invertido: en una pantalla de radio que se mira
+     de noche y a la intemperie, el fondo casi negro cansa menos y el texto no
+     va en blanco puro para que no deslumbre. -->
+<resources>
+    <color name="fondo">#101214</color>
+    <color name="texto">#ECEFF1</color>
+    <color name="texto_flojo">#9AA0A6</color>
+    <color name="separador">#33FFFFFF</color>
+</resources>
