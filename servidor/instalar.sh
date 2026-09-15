@@ -43,6 +43,11 @@ SERVIDOR_PUBLICO="or.adan.ovh"
 PROGRAMAS="nodovirtual.py nododatos.py mandovirtual.py igate.py registro.py"
 TODAS="reflector datos registro igate mando"
 
+# Lo que se pregunta y se guarda en instalacion.conf.
+VARIABLES="INDICATIVO PIEZAS P_REFLECTOR P_DATOS P_MANDO P_OPERADOR RANURAS
+           EXIGE_IND REFLECTOR_REMOTO ENLACE_MODO ENLACE_A IGATE_LLAMADA
+           IGATE_SERVIDOR IGATE_FREC IGATE_ENVIAR IGATE_NODOS ABRIR_FIREWALL"
+
 TITULO="PTT LoRa"
 # Sin esto, en PuTTY, JuiceSSH y compañía los bordes salen como «lqqqk».
 export NCURSES_NO_UTF8_ACS=1
@@ -374,6 +379,8 @@ ajustes_por_defecto() {
     RANURAS=4
     EXIGE_IND=si
     REFLECTOR_REMOTO="$SERVIDOR_PUBLICO:4461"
+    ENLACE_MODO=ambos
+    ENLACE_A="$SERVIDOR_PUBLICO:4461"
     IGATE_LLAMADA=""
     IGATE_SERVIDOR="euro.aprs2.net"
     IGATE_FREC="433.500"
@@ -385,13 +392,16 @@ ajustes_por_defecto() {
 carga_ajustes() {
     ajustes_por_defecto
     # shellcheck disable=SC1090
-    [ -f "$AJUSTES" ] && . "$AJUSTES"
+    if [ -f "$AJUSTES" ]; then
+        . "$AJUSTES"
+        # Una instalación de antes de existir el enlace era una isla, y así se
+        # queda hasta que alguien diga otra cosa en el asistente.
+        grep -q '^ENLACE_MODO=' "$AJUSTES" || ENLACE_MODO=no
+    fi
     # En desatendido, lo que venga en el entorno manda sobre lo guardado.
     if [ "$MODO_UI" = desatendido ]; then
         local v
-        for v in INDICATIVO PIEZAS P_REFLECTOR P_DATOS P_MANDO P_OPERADOR RANURAS \
-                 EXIGE_IND REFLECTOR_REMOTO IGATE_LLAMADA IGATE_SERVIDOR IGATE_FREC \
-                 IGATE_ENVIAR IGATE_NODOS ABRIR_FIREWALL SECRETO_NUEVO; do
+        for v in $VARIABLES SECRETO_NUEVO; do
             eval "[ -n \"\${_ENV_$v+x}\" ]" && eval "$v=\$_ENV_$v"
         done
     fi
@@ -404,9 +414,7 @@ guarda_ajustes() {
         echo "# \`sudo pttlora-servidor\` para proponerlo la próxima vez."
         echo "# El secreto del relevo NO está aquí: está en secreto (sólo root)."
         local v
-        for v in INDICATIVO PIEZAS P_REFLECTOR P_DATOS P_MANDO P_OPERADOR RANURAS \
-                 EXIGE_IND REFLECTOR_REMOTO IGATE_LLAMADA IGATE_SERVIDOR IGATE_FREC \
-                 IGATE_ENVIAR IGATE_NODOS ABRIR_FIREWALL; do
+        for v in $VARIABLES; do
             printf '%s=%q\n' "$v" "${!v}"
         done
     } >"$AJUSTES"
@@ -496,6 +504,53 @@ El público es $SERVIDOR_PUBLICO:4461" "$REFLECTOR_REMOTO" || cancelado
         [ "$MODO_UI" = desatendido ] && { echo "REFLECTOR_REMOTO no válido: $r"; exit 2; }
         ui_msg "Escríbelo como servidor:puerto, por ejemplo $SERVIDOR_PUBLICO:4461"
     done
+}
+
+# Una red propia no tiene por qué ser una isla. El reflector de aquí se engancha
+# al principal como un cliente más (la conexión sale de aquí: no hay que abrir
+# nada para esto) y así una celda de un grupo habla con las del resto.
+paso_enlace() {
+    tiene reflector || return 0
+    local r def=enlazada
+    case $ENLACE_MODO in
+        recibir) def=escuchar ;;
+        no)      def=isla ;;
+        *)       [ "$ENLACE_A" != "$SERVIDOR_PUBLICO:4461" ] && def=otro ;;
+    esac
+    if [ "$MODO_UI" = desatendido ]; then
+        case $ENLACE_MODO in ambos|recibir|no) ;; *) echo "ENLACE_MODO es ambos, recibir o no"; exit 2 ;; esac
+        [ "$ENLACE_MODO" = no ] || hostpuerto_valido "$ENLACE_A" || { echo "ENLACE_A no válido: $ENLACE_A"; exit 2; }
+        return 0
+    fi
+    ui_msg "TU RED Y LA RED PRINCIPAL
+
+Tu red sigue siendo tuya. Pero puede estar ENLAZADA a la principal ($SERVIDOR_PUBLICO): tus celdas oyen a las de cualquier sitio y ellas a vosotros.
+
+Enlazada, vuestra voz y las balizas de las celdas (con su posición) llegan a toda la red.
+
+Se cambia cuando quieras con «sudo pttlora-servidor»." || cancelado
+    # El menú propone lo que había, poniéndolo el primero.
+    local op=(enlazada "Enlazada (recomendado)" escuchar "Sólo escuchar a la red" isla "Independiente, sin enlace" otro "Enlazada a otro servidor")
+    local orden=() i
+    for (( i=0; i<${#op[@]}; i+=2 )); do [ "${op[i]}" = "$def" ] && orden+=("${op[i]}" "${op[i+1]}"); done
+    for (( i=0; i<${#op[@]}; i+=2 )); do [ "${op[i]}" != "$def" ] && orden+=("${op[i]}" "${op[i+1]}"); done
+    ui_menu r "¿Cómo queda tu red?
+
+· Enlazada: oís y os oyen.
+· Sólo escuchar: oís a la red, lo vuestro no sale.
+· Independiente: una isla." "${orden[@]}" || cancelado
+    case $r in
+        enlazada) ENLACE_MODO=ambos;   ENLACE_A="$SERVIDOR_PUBLICO:4461" ;;
+        escuchar) ENLACE_MODO=recibir; [ "$ENLACE_A" = "" ] && ENLACE_A="$SERVIDOR_PUBLICO:4461" ;;
+        isla)     ENLACE_MODO=no ;;
+        otro)
+            ENLACE_MODO=ambos
+            while :; do
+                ui_texto r "¿A qué reflector te enlazas? (servidor:puerto)" "$ENLACE_A" || cancelado
+                hostpuerto_valido "$r" && { ENLACE_A=$r; break; }
+                ui_msg "Escríbelo como servidor:puerto, por ejemplo $SERVIDOR_PUBLICO:4461"
+            done ;;
+    esac
 }
 
 pide_puerto() {   # pide_puerto VARIABLE "qué"
@@ -672,6 +727,13 @@ paso_firewall() {
     fi
 }
 
+texto_enlace_args() {
+    case $ENLACE_MODO in
+        ambos)   printf ' --enlace %s' "$ENLACE_A" ;;
+        recibir) printf ' --enlace %s --enlace-modo recibir' "$ENLACE_A" ;;
+    esac
+}
+
 puertos_publicos() {
     tiene reflector && echo "$P_REFLECTOR"
     tiene datos     && echo "$P_DATOS"
@@ -683,7 +745,8 @@ texto_resumen() {
 
 Se va a montar:"
     tiene reflector && t="$t
-  · Reflector, puerto $P_REFLECTOR"
+  · Reflector, puerto $P_REFLECTOR
+    $(case $ENLACE_MODO in ambos) echo "enlazado a $ENLACE_A" ;; recibir) echo "escuchando a $ENLACE_A" ;; *) echo "independiente" ;; esac)"
     tiene datos     && t="$t
   · Nodo de datos, puerto $P_DATOS"
     tiene registro  && t="$t
@@ -802,7 +865,7 @@ instala() {
 
     if tiene reflector; then
         escribe_unidad reflector "reflector (punto de reunión de las celdas)" \
-            "$PY $DIR_PROG/nodovirtual.py --escucha $P_REFLECTOR"
+            "$PY $DIR_PROG/nodovirtual.py --escucha $P_REFLECTOR$(texto_enlace_args)"
     fi
     if tiene datos; then
         local ex=""; [ "$EXIGE_IND" = si ] && ex=" --exige-indicativo"
@@ -920,6 +983,19 @@ RELEVO DE MANDO — en tu firmware, fichero firmware/src/secreto.h:
 (compila y flashea las celdas con él; no lo publiques)
 Para administrar una celda: ssh -L $P_OPERADOR:127.0.0.1:$P_OPERADOR esta-máquina"
     fi
+    if tiene reflector; then
+        case $ENLACE_MODO in
+            ambos)   t="$t
+
+RED: enlazada a $ENLACE_A. Tus celdas oyen al resto y el resto os oye." ;;
+            recibir) t="$t
+
+RED: escuchando a $ENLACE_A. Lo vuestro no sale de tu red." ;;
+            *)       t="$t
+
+RED: independiente. Para enlazarla más adelante: sudo pttlora-servidor" ;;
+        esac
+    fi
     tiene igate && [ "$IGATE_ENVIAR" = no ] && t="$t
 
 IGATE en modo «sólo mirar». Mira lo que publicaría con:
@@ -1021,6 +1097,7 @@ asistente() {
     paso_indicativo
     paso_piezas
     paso_reflector_remoto
+    paso_enlace
     paso_puertos
     paso_datos
     paso_mando
@@ -1055,9 +1132,7 @@ principal() {
 
     # Lo que venga en el entorno para el modo desatendido se aparta antes de cargar
     # los ajustes guardados, para que mande sobre ellos.
-    for _v in INDICATIVO PIEZAS P_REFLECTOR P_DATOS P_MANDO P_OPERADOR RANURAS EXIGE_IND \
-              REFLECTOR_REMOTO IGATE_LLAMADA IGATE_SERVIDOR IGATE_FREC IGATE_ENVIAR \
-              IGATE_NODOS ABRIR_FIREWALL SECRETO_NUEVO; do
+    for _v in $VARIABLES SECRETO_NUEVO; do
         [ -n "${!_v+x}" ] && eval "_ENV_$_v=\${$_v}"
     done
 

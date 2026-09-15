@@ -3,6 +3,8 @@
 #
 #   ./nodovirtual.py --a 192.168.4.1            se cuelga del enlace de un nodo
 #   ./nodovirtual.py --escucha 4461             hace de punto de reunion
+#   ./nodovirtual.py --escucha 4461 --enlace or.adan.ovh:4461 [--enlace-modo recibir]
+#                                               ...y ademas enlazado a otro
 #
 # Habla el protocolo del ENLACE (puerto 4461): por ahi no van ordenes, van
 # TRAMAS DEL AIRE tal cual, envueltas en KISS con el tipo CMD_AIRE.
@@ -13,11 +15,29 @@
 #      de cada ubicacion se enganchan a el y quedan todos en la misma red, sin
 #      que ninguno necesite IP publica ni abrir puertos. Con --escucha ya hace
 #      justo eso: reparte a todos menos al que lo trajo.
+#
+# EL ENLACE A OTRO REFLECTOR (--enlace). Una red propia —la de un grupo, con su
+# reflector— no tiene por que ser una isla: con `--enlace` el reflector abre
+# una conexion SALIENTE a otro (el principal) y la trata como a un par mas. Lo
+# de sus celdas sale a la otra red y lo de la otra red entra en las suyas. Al
+# de arriba no le hace falta saber nada: le llega un cliente normal, igual que
+# una celda. Y como la conexion la abre el de abajo, no hay que abrir puertos
+# en ningun router para enlazarse.
+#
+#   --enlace-modo ambos     (defecto) se oye y se habla con la otra red
+#   --enlace-modo recibir   solo se oye: lo de aqui no sale
+#
+# Un unico enlace por reflector, y a proposito: con uno, la red es un ARBOL y un
+# arbol no tiene bucles. Aun asi alguien puede cerrar un circulo (A enlazado a
+# B y B a A), y entre reflectores —que no descartan duplicados como los nodos—
+# eso seria una tormenta. Por eso por el enlace no sube dos veces la misma
+# trama, ni se acepta de vuelta una que ya cruzo (`Cruzadas`).
 
 import socket
 import sys
 import threading
 import time
+from collections import deque
 
 FEND, FESC, TFEND, TFESC = 0xC0, 0xDB, 0xDC, 0xDD
 CMD_AIRE = 0x11
@@ -108,7 +128,32 @@ MUDO_S = 2.0
 TOT_S = 180.0
 
 
-def reflector(puerto, vistas):
+class Cruzadas:
+    """Tramas que han cruzado el enlace hace poco, en cualquier sentido. Los
+    reflectores no tocan las tramas, asi que la trama entera es la llave.
+
+    NO se aplica a lo que entra por los pares normales: dos celdas que oyen la
+    misma transmision la mandan identica, y esas copias son las que cuenta el
+    censo como `testigos`. Solo el enlace necesita el cortafuegos."""
+    VIDA_S = 10.0
+
+    def __init__(self):
+        self.vistas = {}
+
+    def ya(self, t):
+        """True si ya cruzo; si no, la apunta."""
+        ahora = time.time()
+        if len(self.vistas) > 4096:
+            self.vistas = {k: v for k, v in self.vistas.items()
+                           if ahora - v < self.VIDA_S}
+        v = self.vistas.get(t)
+        if v is not None and ahora - v < self.VIDA_S:
+            return True
+        self.vistas[t] = ahora
+        return False
+
+
+def reflector(puerto, vistas, enlace=None, modo='ambos'):
     """Punto de reunion: reparte a todos menos al que lo trajo, y ARBITRA.
 
     Repartir es EXACTAMENTE lo que hace un nodo con varios enlaces, y la razon
@@ -127,8 +172,9 @@ def reflector(puerto, vistas):
     srv.bind(('', puerto))
     srv.listen(32)
     print('reflector escuchando en el puerto %d' % puerto)
-    pares = []
+    pares = []                   # (socket, quien, es_el_enlace)
     lock = threading.Lock()
+    cruzadas = Cruzadas()
     # Quien tiene la palabra: (src, stream, cuando empezo, ultima vez que se vio)
     turno = [None]
     descartadas = [0]
@@ -166,7 +212,7 @@ def reflector(puerto, vistas):
         descartadas[0] += 1
         return False
 
-    def atiende(c, quien):
+    def atiende(c, quien, arriba=False):
         d = Desentrama()
         try:
             while True:
@@ -178,13 +224,18 @@ def reflector(puerto, vistas):
                         continue
                     vistas.append(p)
                     with lock:
+                        if arriba and cruzadas.ya(p):
+                            continue           # vuelve algo que ya subio: bucle
                         pasa = deja_pasar(p)
                     print('  %s %s %s' % (quien, '->' if pasa else 'XX', describe(p)))
                     if not pasa:
                         continue
                     with lock:
-                        for otro, _ in pares:
+                        for otro, _, es_enlace in pares:
                             if otro is not c:
+                                if es_enlace and (modo == 'recibir'
+                                                  or cruzadas.ya(p)):
+                                    continue
                                 try:
                                     otro.sendall(enmarcar(CMD_AIRE, p))
                                 except OSError:
@@ -195,12 +246,42 @@ def reflector(puerto, vistas):
             c.close()
             print('%s se fue' % quien)
 
+    def sube():
+        """Mantiene el enlace con el otro reflector: si se cae, se reintenta
+        con espera creciente, y la red de aqui sigue funcionando entretanto."""
+        host, _, p = enlace.rpartition(':')
+        host = host.strip('[]')
+        espera = 5
+        while True:
+            try:
+                c = socket.create_connection((host, int(p)), 10)
+                c.settimeout(None)
+                c.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError as e:
+                print('enlace %s: no conecta (%s); otra vez en %d s'
+                      % (enlace, e, espera))
+                time.sleep(espera)
+                espera = min(espera * 2, 300)
+                continue
+            espera = 5
+            quien = 'ENLACE %s' % enlace
+            print('%s enganchado (%s)' % (quien, 'se oye y se habla'
+                                          if modo == 'ambos' else 'solo se oye'))
+            with lock:
+                pares.append((c, quien, True))
+            atiende(c, quien, arriba=True)
+            time.sleep(espera)
+
+    if enlace:
+        threading.Thread(target=sube, daemon=True).start()
+
     while True:
         c, dir_ = srv.accept()
-        quien = '%s:%d' % dir_
+        quien = '%s:%d' % dir_[:2]
         print('%s enganchado' % quien)
         with lock:
-            pares.append((c, quien))
+            pares.append((c, quien, False))
         threading.Thread(target=atiende, args=(c, quien), daemon=True).start()
 
 
@@ -211,13 +292,20 @@ def main():
 
     vistas = []
     if '--escucha' in sys.argv:
+        modo = opt('--enlace-modo', 'ambos')
+        if modo not in ('ambos', 'recibir'):
+            print('--enlace-modo es ambos o recibir')
+            return 2
         # Sin buffer: si corre como servicio, lo que se escribe tiene que
         # aparecer en el registro cuando pasa, no cuando se llene un buffer.
         try:
             sys.stdout.reconfigure(line_buffering=True)
         except AttributeError:
             pass
-        reflector(int(opt('--escucha', '4461')), vistas)
+        # Un reflector corre meses: no se guarda lo que pasa (eso era una lista
+        # que crecia con cada trama, para siempre).
+        reflector(int(opt('--escucha', '4461')), deque(maxlen=64),
+                  opt('--enlace'), modo)
         return 0
     host = opt('--a')
     if not host:

@@ -371,6 +371,39 @@ Después, `sudo pttlora-servidor` vuelve a abrirlo para cambiar ajustes,
 actualizar, ver el estado o desinstalar (también `--actualizar`, `--estado`,
 `--desinstalar`, y `--texto` si prefieres preguntas sin ventanas).
 
+### Red propia, pero no aislada
+
+Tener tu servidor no obliga a ser una isla. El asistente pregunta cómo queda tu
+red respecto a la principal:
+
+| | tus celdas oyen al resto | el resto os oye |
+|---|---|---|
+| **Enlazada** (lo propuesto) | sí | sí |
+| **Sólo escuchar** | sí | no |
+| **Independiente** | no | no |
+
+Enlazada, tu reflector abre **una conexión saliente** al principal y entra como
+un cliente más, igual que una celda: no hay que abrir nada en el router para
+esto, y el principal no necesita saber nada de ti. Tu grupo sigue teniendo su
+reflector, sus normas y su nodo de datos, y además una celda en Madrid habla con
+otra en cualquier sitio. Si se cae Internet o el principal, **tu red sigue
+funcionando** y el enlace se rehace solo cuando vuelve.
+
+A mano es una opción del reflector:
+
+```bash
+tools/nodovirtual.py --escucha 4461 --enlace or.adan.ovh:4461                        # enlazada
+tools/nodovirtual.py --escucha 4461 --enlace or.adan.ovh:4461 --enlace-modo recibir  # sólo escuchar
+```
+
+⚠️ Enlazada, **vuestra voz y las balizas de vuestras celdas, con su posición,
+llegan a toda la red**. Es lo que se busca, pero conviene decidirlo.
+
+Cada reflector tiene **un único enlace**, así que la red es un árbol. Y si
+alguien cierra un círculo (A enlazado a B y B a A), por el enlace no vuelve a
+subir una trama que ya lo cruzó: sin eso, un círculo son decenas de miles de
+tramas en tres segundos. Banco: `tools/pruebaenlazados.py`.
+
 ### A mano
 
 ```bash
