@@ -238,6 +238,7 @@ POLITICA_DEFECTO = {
     'aprobadas_src': {},       # src hex -> {nota, cuando}
     'bloqueos': [],            # {que: id|ind|src|ip, valor, hasta, motivo, cuando}
     'perdones': {},            # sujeto -> cuando
+    'olvidados': {},           # clave hex -> cuando: fuera de la lista de vistos
 }
 
 
@@ -419,6 +420,10 @@ class Reflector:
             print('-- identidad de este reflector: ID %s' % ident.id_corto(self.clave))
         self.pares = []
         self.lock = threading.RLock()
+        # Guardar el estado lo piden varios hilos: sin cerrojo propio dos
+        # escrituras se pisaban en el .tmp (JSON roto) o una foto vieja
+        # llegaba al disco despues de una nueva.
+        self.lock_disco = threading.Lock()
         self.cruzadas = Cruzadas()
         self.turno = None      # [src, stream, empezo, ultima, conexion]
         self.descartadas = 0
@@ -447,6 +452,10 @@ class Reflector:
     def guarda_estado(self):
         if not self.f_estado:
             return
+        with self.lock_disco:
+            self._guarda_estado()
+
+    def _guarda_estado(self):
         with self.lock:
             con = [{
                 'quien': c.quien, 'ip': c.ip, 'clase': c.clase,
@@ -931,6 +940,8 @@ class Reflector:
                 self.pares[:] = [x for x in self.pares if x[0] is not c]
             c.cierra()
             print('%s se fue' % c.quien)
+            if c.clave:
+                self.guarda_estado()
 
     # --------------------------------------------------------- los hilos --
     def sube(self):
@@ -1003,6 +1014,13 @@ class Reflector:
                         self.aplica_juicio(c)
                 if n % 5 == 0 or cambio:
                     with self.lock:
+                        # Olvidar un pendiente abandonado. Si vuelve a
+                        # conectar despues, entra como nuevo.
+                        for hx, t in self.politica.get('olvidados', {}).items():
+                            v = self.vistos.get(hx)
+                            if v and v.get('ultima', 0) <= t and not any(
+                                    o.clave and o.clave.hex() == hx for o, _, _ in self.pares):
+                                del self.vistos[hx]
                         for sj in list(self.sanciones):
                             self.sancion_vigente(sj)     # limpia caducadas y perdonadas
                             h = self.sanciones[sj]

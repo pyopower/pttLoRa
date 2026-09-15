@@ -134,6 +134,12 @@ class Par:
         return self.avisos[-1].get('estado') if self.avisos else None
 
     def cierra(self):
+        # shutdown y no solo close: con otro hilo esperando en recv, close no
+        # manda el FIN y el reflector cree que seguimos ahi.
+        try:
+            self.s.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         try:
             self.s.close()
         except OSError:
@@ -419,6 +425,12 @@ def main():
     time.sleep(0.5)
     corto2 = Par(P, sk6, 'EA6CORTO')
     comprueba('reconectar no reinicia la prueba', hasta(lambda: corto2.estado() == 'escucha', 3))
+    corto2.cierra()
+    time.sleep(1)
+    id6 = identidad.id_corto(identidad.publica(sk6))
+    print('14. olvidar un pendiente que ya no está')
+    print('   ' + admin('olvida', 'id:' + id6).strip())
+    comprueba('ya no sale en pendientes', hasta(lambda: id6 not in admin('pendientes'), 8))
     print('\n' + admin().strip())
 
 

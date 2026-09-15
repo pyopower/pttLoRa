@@ -995,7 +995,7 @@ print("|".join([e["estado"], e.get("id", "")[:8], e.get("contacto", ""), e.get("
     case $est in
         habla)
             case $motivo in
-                periodo*) printf '\n\n⏳ Estáis en PERIODO DE PRUEBA: se os oye ya. Para seguir después, pásale a quien administra la red principal el ID de tu servidor: %s%s\n(%s)' "$id" "${contacto:+
+                periodo*) printf '\n\n⏳ Estáis en PERIODO DE PRUEBA en la red principal%s. Para seguir después, pásale a quien administra la red principal el ID de tu servidor: %s%s\n(%s)' "$([ "$ENLACE_MODO" = ambos ] && echo ': se os oye ya')" "$id" "${contacto:+
 Contacto: $contacto}" "$motivo" ;;
                 *) printf '\n\nLa red principal os ha aceptado.' ;;
             esac ;;

@@ -8,6 +8,7 @@
     pttlora-admin bloquea <quien> [horas] [motivo...]
     pttlora-admin desbloquea <quien>
     pttlora-admin perdona <ID|IP>         quita una sancion automatica
+    pttlora-admin olvida <ID>             quita de pendientes uno que ya no esta
     pttlora-admin lista                   bloqueos, aprobados y sanciones
     pttlora-admin politica                como esta
     pttlora-admin politica nuevos   hablan|escuchan|fuera
@@ -40,7 +41,8 @@ ESTADO = os.environ.get('PTTLORA_ESTADO', '/var/lib/pttlora/estado.json')
 IND_RE = re.compile(r'^([A-Z0-9]{1,3}/)?[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}[A-Z]'
                     r'(-([1-9]|[1-9][0-9]))?(/[A-Z0-9]{1,4})?$')
 DEFECTO = {'nuevos': 'escuchan', 'gracia_horas': 72, 'anonimas': 'hablan', 'contacto': '',
-           'aprobadas': {}, 'aprobadas_src': {}, 'bloqueos': [], 'perdones': {}}
+           'aprobadas': {}, 'aprobadas_src': {}, 'bloqueos': [], 'perdones': {},
+           'olvidados': {}}
 
 
 def fecha(t):
@@ -333,6 +335,20 @@ def o_perdona(a):
     print('✔ Perdonado: %s' % ', '.join(s[:11] for s in sujetos))
 
 
+def o_olvida(a):
+    if not a:
+        sys.exit('uso: pttlora-admin olvida <ID>')
+    e, p = estado(), politica()
+    k = resuelve_id(a[0], e, p, exacto=True)
+    if not k or k not in e.get('vistos', {}):
+        sys.exit('✘ No hay ningún reflector visto con ID «%s».' % a[0])
+    if any(c.get('id') == k for c in e.get('conexiones', [])):
+        sys.exit('✘ Está conectado ahora: bloquéalo o espera a que se vaya.')
+    p['olvidados'][k] = time.time()
+    escribe_politica(p)
+    print('✔ Olvidado el %s. Si vuelve, entrará como nuevo.' % nombre_de('id', k, e))
+
+
 def o_aprueba_src(a):
     if not a or not re.fullmatch(r'(src:)?[0-9a-fA-F]{6}', a[0]):
         sys.exit('uso: pttlora-admin aprueba-src <src> [nota]')
@@ -397,7 +413,7 @@ def o_politica(a):
 ORDENES = {'estado': o_estado, 'pendientes': o_pendientes, 'aprueba': o_aprueba,
            'desaprueba': o_desaprueba, 'bloquea': o_bloquea, 'desbloquea': o_desbloquea,
            'perdona': o_perdona, 'lista': o_lista, 'politica': o_politica,
-           'aprueba-src': o_aprueba_src}
+           'aprueba-src': o_aprueba_src, 'olvida': o_olvida}
 
 
 def main():
