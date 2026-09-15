@@ -22,8 +22,8 @@ import time
 FEND, FESC, TFEND, TFESC = 0xC0, 0xDB, 0xDC, 0xDD
 CMD_AIRE = 0x11
 CAB_LEN = 8
-T_VOZ, T_INICIO, T_FIN, T_HOLA = 1, 2, 3, 4
-NOMBRES = {1: 'VOZ', 2: 'INICIO', 3: 'FIN', 4: 'HOLA'}
+T_VOZ, T_INICIO, T_FIN, T_HOLA, T_INFORME = 1, 2, 3, 4, 5
+NOMBRES = {1: 'VOZ', 2: 'INICIO', 3: 'FIN', 4: 'HOLA', 5: 'INFORME'}
 
 
 def enmarcar(tipo, datos=b''):
@@ -142,7 +142,10 @@ def reflector(puerto, vistas):
         q = turno[0]
         # Las balizas no se arbitran: son identificacion de estacion, no voz,
         # y callarlas seria justo lo contrario de lo que hay que hacer.
-        if tipo == T_HOLA:
+        # El INFORME tampoco: no es voz, no ocupa el canal de nadie (ni siquiera
+        # sale al aire) y es lo que alimenta el censo. Ademas, si cayera en el
+        # arbitraje del turno podria ROBARSELO a quien esta hablando.
+        if tipo in (T_HOLA, T_INFORME):
             return True
         if q and (ahora - q[3] > MUDO_S or ahora - q[2] > TOT_S):
             q = turno[0] = None        # se fue sin despedirse, o TOT

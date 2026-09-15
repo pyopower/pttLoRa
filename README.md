@@ -350,6 +350,29 @@ usando el resto del servidor público, o al revés.
 Ninguna necesita base de datos ni dependencias: son procesos Python sueltos que
 arrancan con un `systemd` de diez líneas.
 
+### La forma fácil: el asistente
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pyopower/pttLoRa/main/servidor/instalar.sh | sudo bash
+```
+
+Te pregunta lo mínimo en ventanas paso a paso —tu indicativo y qué piezas
+quieres—, instala Python si falta, crea los servicios con un usuario sin
+privilegios, abre el cortafuegos si lo hay y al acabar te dice **qué poner en la
+app** y, si has montado el relevo, **qué secreto va en tu firmware**. No toca
+nada hasta enseñarte un resumen.
+
+Vale para cualquier Linux con systemd y la arquitectura da igual: un PC o VPS
+(amd64), cualquier Raspberry Pi de la 1 a la 5, la Zero y la Zero 2 W. Todo el
+servidor ocupa unos 60 MB de memoria. Se prepara para leerse en una terminal
+del móvil, por SSH.
+
+Después, `sudo pttlora-servidor` vuelve a abrirlo para cambiar ajustes,
+actualizar, ver el estado o desinstalar (también `--actualizar`, `--estado`,
+`--desinstalar`, y `--texto` si prefieres preguntas sin ventanas).
+
+### A mano
+
 ```bash
 # reflector
 tools/nodovirtual.py --escucha 4461
