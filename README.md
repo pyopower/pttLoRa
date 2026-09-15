@@ -404,6 +404,50 @@ alguien cierra un círculo (A enlazado a B y B a A), por el enlace no vuelve a
 subir una trama que ya lo cruzó: sin eso, un círculo son decenas de miles de
 tramas en tres segundos. Banco: `tools/pruebaenlazados.py`.
 
+### La guardia: servidores ajenos mal configurados, con ruido o con mala idea
+
+Abrir la red a servidores ajenos es abrirla también a los que están mal
+configurados, averiados o llenos de ruido, y casi todos con IP dinámica. Por eso
+cada reflector lleva una guardia, y **a los usuarios de siempre no les cambia
+nada**: la app entra por el nodo de datos, que no pasa por ella, y una celda que
+se conecta directamente sigue hablando como hasta ahora.
+
+- **Identidad, no IP.** Un servidor enlazado se presenta con una clave Ed25519
+  que se crea sola la primera vez y firma un reto al conectar. Se le aprueba o
+  se le bloquea por esa clave, así que cambiar de IP no le sirve de nada, y
+  espiar la conexión no permite suplantarlo. Python puro, sin dependencias
+  (`tools/identidad.py`).
+- **Periodo de prueba.** Un servidor nuevo **habla desde el primer momento**
+  durante 72 horas, para que quien lo monta compruebe que todo va, y en ese
+  tiempo el sysop de la red principal lo aprueba. Si no, pasa a **escuchar sin
+  que se le oiga**. Reconectar no reinicia el plazo, y no hay periodo de prueba
+  si desde su misma red o con su mismo indicativo ya se bloqueó a otro servidor:
+  a quien se echa y vuelve con una clave nueva, eso sólo le sirve para escuchar.
+- **Lista negra** por identidad, indicativo (entre por donde entre, también
+  desde la app), estación o IP y rango, para siempre o por horas.
+- **Sanciones automáticas** a los servidores identificados: tormenta de tramas,
+  basura, ruido (ráfagas de pulsaciones de menos de un segundo), acaparar el
+  turno hasta el TOT o reconectar sin parar. Diez minutos la primera vez, una
+  hora la segunda, un día la tercera. Y una conexión lenta ya no frena a las
+  demás.
+
+Se administra con `sudo pttlora-admin`, pensado para usarlo desde el móvil por
+SSH. El reflector aplica los cambios en un segundo, sin reiniciar:
+
+```bash
+sudo pttlora-admin                      # quién está conectado y cómo
+sudo pttlora-admin pendientes           # servidores esperando aprobación
+sudo pttlora-admin aprueba a4cca4be     # que hable para siempre
+sudo pttlora-admin bloquea a4cca4be 24 ruido constante
+sudo pttlora-admin bloquea EA1ABC       # un indicativo, con todos sus SSID
+sudo pttlora-admin politica contacto "tu@correo"   # lo ve quien se enlaza
+sudo pttlora-admin politica gracia 72   # horas de prueba (0 = sin prueba)
+```
+
+El servidor enlazado ve en todo momento qué le ha contestado la red principal
+—periodo de prueba, aprobado o fuera, y por qué—, con su ID y tu contacto. Banco:
+`tools/pruebaguardia.py`.
+
 ### A mano
 
 ```bash

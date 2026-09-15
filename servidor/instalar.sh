@@ -37,10 +37,11 @@ DIR_UNID="$PREFIJO/etc/systemd/system"
 DIR_DATOS="$PREFIJO/var/lib/pttlora"
 AJUSTES="$DIR_CONF/instalacion.conf"
 ORDEN="$PREFIJO/usr/local/sbin/pttlora-servidor"
+ORDEN_ADMIN="$PREFIJO/usr/local/sbin/pttlora-admin"
 USUARIO="pttlora"
 SERVIDOR_PUBLICO="or.adan.ovh"
 
-PROGRAMAS="nodovirtual.py nododatos.py mandovirtual.py igate.py registro.py"
+PROGRAMAS="nodovirtual.py identidad.py admin.py nododatos.py mandovirtual.py igate.py registro.py"
 TODAS="reflector datos registro igate mando"
 
 # Lo que se pregunta y se guarda en instalacion.conf.
@@ -296,7 +297,8 @@ requisitos() {
     # Las ventanas. Si no están, se intenta poner whiptail (un paquete
     # pequeño que ya viene en Raspberry Pi OS, Debian y Ubuntu); si no se
     # puede, se sigue en modo texto, que pregunta exactamente lo mismo.
-    if [ "$MODO_UI" = ventanas ] && ! command -v whiptail >/dev/null; then
+    if [ "$MODO_UI" = ventanas ] && [ "${ACCION:-asistente}" != estado ] && [ "${ACCION:-}" != actualizar ] \
+            && ! command -v whiptail >/dev/null; then
         echo "  Preparando las ventanas del asistente..."
         instala_paquete whiptail newt >/dev/null 2>&1 || true
         command -v whiptail >/dev/null || MODO_UI=texto
@@ -728,10 +730,13 @@ paso_firewall() {
 }
 
 texto_enlace_args() {
-    case $ENLACE_MODO in
-        ambos)   printf ' --enlace %s' "$ENLACE_A" ;;
-        recibir) printf ' --enlace %s --enlace-modo recibir' "$ENLACE_A" ;;
-    esac
+    printf ' --politica %s --estado %s' "$DIR_CONF/politica.json" "$DIR_DATOS/estado.json"
+    [ "$ENLACE_MODO" = no ] && return 0
+    # La identidad vive en /var/lib/pttlora: si se borra, esta máquina pasa a
+    # ser otra para la red principal y hay que volver a aprobarla.
+    printf ' --enlace %s --identidad %s --indicativo %s' "$ENLACE_A" "$DIR_DATOS/identidad" "$INDICATIVO"
+    [ "$ENLACE_MODO" = recibir ] && printf ' --enlace-modo recibir'
+    return 0
 }
 
 puertos_publicos() {
@@ -867,6 +872,22 @@ instala() {
         escribe_unidad reflector "reflector (punto de reunión de las celdas)" \
             "$PY $DIR_PROG/nodovirtual.py --escucha $P_REFLECTOR$(texto_enlace_args)"
     fi
+    if tiene reflector; then
+        # La guardia: quién puede hablar y los bloqueos. La escribe
+        # pttlora-admin y el reflector la relee sola. Si ya existe no se toca.
+        if [ ! -f "$DIR_CONF/politica.json" ]; then
+            printf '{\n "nuevos": "escuchan",\n "gracia_horas": 72,\n "anonimas": "hablan",\n "contacto": "",\n "aprobadas": {},\n "aprobadas_src": {},\n "bloqueos": [],\n "perdones": {}\n}\n' >"$DIR_CONF/politica.json"
+            chmod 0644 "$DIR_CONF/politica.json"
+        fi
+        mkdir -p "$(dirname "$ORDEN_ADMIN")"
+        {
+            echo '#!/bin/sh'
+            echo '# pttlora-admin: la guardia del reflector (quién está, aprobar, bloquear).'
+            echo "exec $PY $DIR_PROG/admin.py --politica $DIR_CONF/politica.json --estado $DIR_DATOS/estado.json \"\$@\""
+        } >"$ORDEN_ADMIN"
+        chmod 0755 "$ORDEN_ADMIN"
+        bien "orden «sudo pttlora-admin» para aprobar y bloquear"
+    fi
     if tiene datos; then
         local ex=""; [ "$EXIGE_IND" = si ] && ex=" --exige-indicativo"
         escribe_unidad datos "nodo de datos para las apps" \
@@ -950,6 +971,41 @@ estado_breve() {
     return $ok
 }
 
+# Lo que ha contestado la red principal: una red nueva habla durante un periodo
+# de prueba, y en ese tiempo quien la administra la aprueba. Hay que decirle a
+# la persona qué ID pasar y a quién.
+texto_estado_enlace() {
+    [ -n "$PREFIJO" ] && return 0
+    local i r="" est id contacto motivo
+    for i in $(seq 1 15); do
+        r=$(python3 -c '
+import json, sys
+try:
+    e = json.load(open(sys.argv[1])).get("enlace", {})
+except Exception:
+    sys.exit(1)
+if e.get("estado") not in ("habla", "escucha", "fuera"):
+    sys.exit(1)
+print("|".join([e["estado"], e.get("id", "")[:8], e.get("contacto", ""), e.get("motivo", "")]))
+' "$DIR_DATOS/estado.json" 2>/dev/null) && break
+        sleep 1
+    done
+    [ -z "$r" ] && { printf '\n(La red principal aún no ha contestado: mira luego «sudo pttlora-admin».)'; return 0; }
+    IFS='|' read -r est id contacto motivo <<<"$r"
+    case $est in
+        habla)
+            case $motivo in
+                periodo*) printf '\n\n⏳ Estáis en PERIODO DE PRUEBA: se os oye ya. Para seguir después, pásale a quien administra la red principal el ID de tu servidor: %s%s\n(%s)' "$id" "${contacto:+
+Contacto: $contacto}" "$motivo" ;;
+                *) printf '\n\nLa red principal os ha aceptado.' ;;
+            esac ;;
+        escucha) printf '\n\n⚠ De momento ESCUCHÁIS sin que se os oiga (%s). Pásale a quien administra la red principal el ID de tu servidor: %s%s' "$motivo" "$id" "${contacto:+
+Contacto: $contacto}" ;;
+        fuera)   printf '\n\n⛔ La red principal no os deja entrar: %s%s' "$motivo" "${contacto:+
+Contacto: $contacto}" ;;
+    esac
+}
+
 ips_locales() {
     hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' | grep -v ':' | head -3 | tr '\n' ' '
 }
@@ -987,10 +1043,10 @@ Para administrar una celda: ssh -L $P_OPERADOR:127.0.0.1:$P_OPERADOR esta-máqui
         case $ENLACE_MODO in
             ambos)   t="$t
 
-RED: enlazada a $ENLACE_A. Tus celdas oyen al resto y el resto os oye." ;;
+RED: enlazada a $ENLACE_A. Tus celdas oyen al resto y el resto os oye.$(texto_estado_enlace)" ;;
             recibir) t="$t
 
-RED: escuchando a $ENLACE_A. Lo vuestro no sale de tu red." ;;
+RED: escuchando a $ENLACE_A. Lo vuestro no sale de tu red.$(texto_estado_enlace)" ;;
             *)       t="$t
 
 RED: independiente. Para enlazarla más adelante: sudo pttlora-servidor" ;;
@@ -1009,6 +1065,9 @@ Y usa en la app tu IP pública o un nombre DNS dinámico."
     [ -n "$NUBE" ] && t="$t
 
 ⚠️ Estás en $NUBE: además del cortafuegos de la máquina, abre los puertos TCP $(puertos_publicos | tr '\n' ' ') en el panel de la nube (security list / grupo de seguridad)."
+    tiene reflector && t="$t
+
+Quién está conectado, aprobar o bloquear: sudo pttlora-admin"
     t="$t
 
 Volver a este asistente: sudo pttlora-servidor
@@ -1033,6 +1092,7 @@ estado() {
     echo
     estado_breve
     echo
+    [ -x "$ORDEN_ADMIN" ] && { "$ORDEN_ADMIN" 2>/dev/null | head -24 | sed 's/^/  /'; echo; }
     di "Últimas líneas:"
     journalctl -u 'pttlora-*' -n 12 --no-pager -o cat 2>/dev/null | sed 's/^/    /'
     echo
@@ -1065,7 +1125,7 @@ Se paran y borran los servicios y los programas. Los ajustes ($DIR_CONF), el sec
     if [ "${ABRIR_FIREWALL:-no}" = si ] && command -v ufw >/dev/null; then
         for n in $(puertos_publicos); do ufw delete allow "$n/tcp" >/dev/null 2>&1; done
     fi
-    rm -rf "$DIR_PROG" "$DIR_CONF" "$DIR_DATOS" "$ORDEN"
+    rm -rf "$DIR_PROG" "$DIR_CONF" "$DIR_DATOS" "$ORDEN" "$ORDEN_ADMIN"
     userdel "$USUARIO" >/dev/null 2>&1
     [ "$MODO_UI" = ventanas ] && clear
     echo; bien "PTT LoRa desinstalado."; echo
