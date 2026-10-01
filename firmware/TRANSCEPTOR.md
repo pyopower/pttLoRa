@@ -45,7 +45,7 @@ botón PRG / pulsador / botones del micro / consola ──► ptt ──► audi
 - **Los avisos de la tarea de audio y de la pila Bluetooth van por una cola** y los
   suelta `loop()`: escribir en los tubos desde otra tarea pisaba los buffers.
 - **Registro de ESP-IDF solo en ERROR**: va por la misma UART que el KISS.
-- La pantalla es un **S-metro de aguja como el de un CB** (`pinta_transceptor`): arriba RX/TX en inverso, quién habla y la frecuencia; abajo un instrumento de doble escala (S1-S9/+20/+40 con S9 = −93 dBm, y la potencia en mW) con la aguja con inercia. Solo queda además un icono de Bluetooth, que parpadea si el micro no está enganchado. Se refresca cada 100 ms mientras se mueve.
+- La pantalla es un **S-metro de aguja como el de un CB** (`pinta_transceptor`): arriba RX/TX en inverso, quién habla y la frecuencia; abajo un instrumento de doble escala (S1-S9/+20/+40 con S9 = −93 dBm, y la potencia en mW) con la aguja con inercia. Solo queda además un icono de Bluetooth: fijo con el micro enganchado, parpadeando si el emparejado no está, y nada si no hay ninguno. En reposo, en el sitio de RX/TX, la pila rellena según la carga (o un rayo por USB sin pila) y el último indicativo si cabe entero. Se refresca cada 100 ms mientras se mueve.
 
 Órdenes (`tools/nodo.py`):
 

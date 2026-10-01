@@ -1574,8 +1574,9 @@ static void gestiona_pantalla()
  *     SX1278 no mide lo que sale).
  *   - la aguja con INERCIA: sube rapido y cae despacio, que es lo que hace que
  *     un S-metro se lea y no baile.
- *   - y un icono diminuto de Bluetooth en la esquina, que PARPADEA si el micro
- *     no esta enganchado: sin el no habria forma de saber por que no suena.
+ *   - y un icono diminuto de Bluetooth en la esquina: fijo con el micro
+ *     enganchado, parpadeando si el emparejado no esta, nada si no hay
+ *     ninguno. Sin el no habria forma de saber por que no suena.
  * El aviso del TOT ocupa el sitio del indicativo los ultimos 15 s, parpadeando.
  * ⚠️ La fuente de Adafruit GFX es de 7 bits: TEXTO SIN TILDES. */
 static uint8_t bateria_pct();
@@ -1757,8 +1758,13 @@ static void pinta_transceptor()
 
     instrumento(aguja);
 
-    bool micro = pantalla_demo || hfp_fase() == HFP_LISTO;
-    if (micro || ((ahora / 500) & 1)) icono_bt(1, 56);
+    /* El micro Bluetooth: FIJO si esta enganchado con el audio abierto,
+       PARPADEANDO si hay uno emparejado que no esta (apagado, fuera de
+       alcance, reconectando), y NADA si no hay ninguno emparejado. */
+    uint8_t fase = pantalla_demo ? (uint8_t)HFP_LISTO : hfp_fase();
+    if (fase == HFP_LISTO ||
+        ((fase == HFP_BUSCANDO || fase == HFP_SIN_AUDIO) && ((ahora / 500) & 1)))
+        icono_bt(1, 56);
 
     oled.display();
     redibujar = false;
