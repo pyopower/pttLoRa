@@ -115,6 +115,34 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
 4. Avisos hablados (prompts de Piper en Codec2 guardados en flash) y teclas
    auxiliares.
 5. Flasher web con un cuestionario mínimo (indicativo, potencia, canal) por WebSerial.
+   Se publica cuando esté validado con el Abbree, marcado como experimental (el flasher
+   de `docs/` sale de `main`).
+6. **Roger beep (propuesto, sin hacer)**: NO codificar el tono en la voz (Codec2 a
+   1200 destroza los tonos y gasta aire), sino una MARCA en la trama de INICIO o FIN
+   («viene de un transceptor autónomo») con la que cada receptor, sea la app o una
+   placa, genera el pitido en local. Así suena limpio, cada uno puede quitarlo y la app
+   puede poner un icono de «autónomo». Comprobar antes que los receptores viejos ignoran
+   el byte de más. Además, un bip local en el propio altavoz al soltar el PTT, que no
+   sale al aire.
+
+## Decisiones de la pantalla (del usuario, 1-oct-2026)
+
+Sencilla, «como un pequeño transceptor de CB». **No volver a cargarla de datos**: los
+contadores, el heap y el estado en texto salen con `nodo.py audio` / `estado`.
+- La OLED es monocroma (SSD1306): para destacar algo hay tamaño, parpadeo y vídeo inverso.
+- La pila va sin porcentaje, solo con el relleno; el sitio es para el indicativo.
+- Un indicativo sale entero o no sale: a medias podría ser el de otra estación.
+- `audio captura [1|2|3]` vuelca la pantalla para verla desde otra máquina (con 1, 2 y 3
+  es una demostración, sin emitir).
+
+## Trabajar desde la nube (Claude Code en claude.ai)
+
+Desde la nube se puede editar, compilar (`pio run -e transceptor`, después de
+`./preparar-audio.sh`) y subir a esta rama. **No se puede**:
+- flashear ni probar en la placa: eso exige estar en la máquina con la placa por USB;
+- emitir nada: las pruebas en el aire, siempre con el permiso del operador.
+La placa de banco (nodoCASA) lleva esta rama. Su copia de antes y la del nodo normal
+están fuera del repositorio, en la máquina del operador.
 
 ⚠️ Todo lo que **emite** lleva `NOCALL` por defecto. Pon tu indicativo antes de salir
 al aire.
