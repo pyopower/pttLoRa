@@ -1577,7 +1577,8 @@ static void gestiona_pantalla()
  *   - y un icono diminuto de Bluetooth en la esquina: fijo con el micro
  *     enganchado, parpadeando si el emparejado no esta, nada si no hay
  *     ninguno. Sin el no habria forma de saber por que no suena. Y en la
- *     esquina contraria una torre si hay una celda a la vista.
+ *     esquina contraria el papel en la red: torre si hay celda, R si repite
+ *     ella (digipeater), nada si esta sola.
  * El aviso del TOT ocupa el sitio del indicativo los ultimos 15 s, parpadeando.
  * ⚠️ La fuente de Adafruit GFX es de 7 bits: TEXTO SIN TILDES. */
 static uint8_t bateria_pct();
@@ -1780,10 +1781,23 @@ static void pinta_transceptor()
     if (fase == HFP_LISTO ||
         ((fase == HFP_BUSCANDO || fase == HFP_SIN_AUDIO) && ((ahora / 500) & 1)))
         icono_bt(1, 56);
-    /* Enfrente, la CELDA: fija si se oyen sus balizas, nada si no (entonces
-       la placa esta en malla y repite ella). Es el mismo criterio con el que
-       el nodo decide si repetir. */
-    if (pantalla_demo || hay_celda_a_la_vista()) icono_celda(116, 56);
+    /* Enfrente, EL PAPEL DE LA PLACA EN LA RED, con el mismo criterio con el
+       que decide si repetir (`hay_a_quien_repetir`):
+         - torre: hay una celda a la vista, y la placa se calla;
+         - R en negativo: repite ella, como un digipeater (no hay celda y hay
+           alguien a quien repetir, o perfil de repetidor fijo);
+         - nada: sola, o en «solo mi radio». */
+    bool celda = pantalla_demo ? pantalla_demo != 3 : hay_celda_a_la_vista();
+    bool repite = pantalla_demo ? pantalla_demo == 3 : hay_a_quien_repetir(0);
+    if (celda && !repite) {
+        icono_celda(116, 56);
+    } else if (repite) {
+        oled.fillRect(118, 55, 9, 9, SSD1306_WHITE);
+        oled.setTextColor(SSD1306_BLACK);
+        oled.setCursor(120, 56);
+        oled.print("R");
+        oled.setTextColor(SSD1306_WHITE);
+    }
 
     oled.display();
     redibujar = false;
