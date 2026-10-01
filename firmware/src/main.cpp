@@ -1586,6 +1586,11 @@ static void smetro(int x, int y, int dbm)
     }
 }
 
+/* DEMOSTRACION para `audio captura N`: dibuja la pantalla de TX (1) o de RX
+   (2) con datos inventados, SIN emitir nada. Sirve para ver y ajustar el
+   diseño desde otra maquina; no toca la radio ni el arbitraje. */
+static uint8_t pantalla_demo = 0;
+
 static void pinta_transceptor()
 {
     uint32_t ahora = millis();
@@ -1602,15 +1607,19 @@ static void pinta_transceptor()
     }
     oled.drawFastHLine(0, 10, 128, SSD1306_WHITE);
 
-    bool tx = transmitiendo;
-    bool rx = !tx && canal_ocupado;
+    bool tx = transmitiendo || pantalla_demo == 1;
+    bool rx = !tx && (canal_ocupado || pantalla_demo == 2);
+    uint32_t desde = pantalla_demo == 1 ? ahora - 47000 : t_ptt;
+    const char *quien = pantalla_demo == 2 ? "EA3ABC-7" : hablante;
+    int dbm = pantalla_demo == 2 ? -87 : hablante_rssi;
+    bool por_rf = pantalla_demo == 2 || hablante_rf;
     oled.setTextSize(2);
     oled.setCursor(0, 14);
     oled.print(tx ? "TX" : (rx ? "RX" : "--"));
     oled.setTextSize(1);
     oled.setCursor(34, 14);
     if (tx) {
-        uint32_t s = (ahora - t_ptt) / 1000;
+        uint32_t s = (ahora - desde) / 1000;
         uint32_t queda = PTT_MAX_MS / 1000 > s ? PTT_MAX_MS / 1000 - s : 0;
         oled.printf("al aire %lus", (unsigned long)s);
         oled.setCursor(34, 24);
@@ -1618,11 +1627,11 @@ static void pinta_transceptor()
         if (queda <= 15) { if ((ahora / 300) & 1) oled.printf("TOT EN %lus", (unsigned long)queda); }
         else oled.printf("queda %lu:%02lu", (unsigned long)(queda / 60), (unsigned long)(queda % 60));
     } else if (rx) {
-        oled.printf("%.15s", hablante[0] ? hablante : "alguien");
+        oled.printf("%.15s", quien[0] ? quien : "alguien");
         oled.setCursor(34, 24);
-        if (hablante_rf) {
-            oled.printf("%d", hablante_rssi);
-            smetro(80, 24, hablante_rssi);
+        if (por_rf) {
+            oled.printf("%d", dbm);
+            smetro(80, 24, dbm);
         } else {
             oled.print("por la red");
         }
@@ -1630,22 +1639,22 @@ static void pinta_transceptor()
         const char *corte = ptt_ultimo_corte();
         oled.printf("%.15s", corte[0] ? corte : "en escucha");
         oled.setCursor(34, 24);
-        if (hablante[0]) {
-            oled.printf("ult %.10s", hablante);
-            if (hablante_rf) oled.printf(" %d", hablante_rssi);
+        if (quien[0]) {
+            oled.printf("ult %.10s", quien);
+            if (por_rf) oled.printf(" %d", dbm);
         } else {
             oled.print("sin trafico aun");
         }
     }
 
     oled.setCursor(0, 36);
-    switch (hfp_fase()) {
+    switch (pantalla_demo ? (uint8_t)HFP_LISTO : hfp_fase()) {
     case HFP_SIN_PILA:     oled.print("micro: SIN BLUETOOTH"); break;
     case HFP_SIN_VINCULAR: oled.print("micro: sin vincular"); break;
     case HFP_BUSCANDO:     oled.print("micro: buscando..."); break;
     case HFP_SIN_AUDIO:    oled.print("micro: sin audio"); break;
     default:
-        oled.printf("micro: %.14s", hfp_nombre()[0] ? hfp_nombre() : "listo");
+        oled.printf("micro: %.14s", pantalla_demo ? "Abbree AP-W1" : (hfp_nombre()[0] ? hfp_nombre() : "listo"));
         break;
     }
 
@@ -3053,6 +3062,29 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
        Bluetooth y el PTT de la placa. */
     case CMD_AUDIO:
 #ifdef AUDIO_BT
+        /* 11 captura [demo]: la pantalla por el cable, un caracter por punto
+           (128x64). Juntando puntos de dos en dos no se lee: probado. */
+        if (n && d[0] == 11) {
+            if (!hay_oled) { log_txt("no hay pantalla que mirar"); break; }
+            pantalla_demo = n > 1 ? d[1] : 0;
+            bool estaba = pantalla_on;
+            pantalla_on = true;
+            pinta();
+            uint8_t *fb = oled.getBuffer();
+            for (int y = 0; y < 64; y++) {
+                char l[131];
+                l[0] = '|';
+                for (int x = 0; x < 128; x++)
+                    l[1 + x] = (fb[(y / 8) * 128 + x] & (1 << (y % 8))) ? '#' : ' ';
+                l[129] = '|';
+                l[130] = 0;
+                log_txt(l);
+            }
+            pantalla_demo = 0;
+            pantalla_on = estaba;
+            redibujar = true;
+            break;
+        }
         if (n && d[0] == 10) {
             if (n > 1) {
                 audio_wifi_permite(d[1]);

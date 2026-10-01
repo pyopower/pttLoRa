@@ -363,6 +363,10 @@ def main():
                 sys.exit('uso: audio bt buscar|conecta MAC|olvida')
         elif sub == 'ptt':
             datos, espera = bytes([8]), 1.5
+        elif sub == 'captura':
+            # la pantalla en texto; `audio captura 1|2` = demostracion de TX|RX (no emite)
+            datos = bytes([11]) + (bytes([int(pos[2])]) if len(pos) > 2 else b'')
+            espera = 3
         elif sub == 'wifi':
             datos = bytes([10]) + (bytes([int(pos[2])]) if len(pos) > 2 else b'')
             espera = 2
