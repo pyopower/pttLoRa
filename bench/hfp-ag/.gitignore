@@ -1,0 +1,5 @@
+.pio/
+sdkconfig.hfpag
+sdkconfig.hfpag.old
+secreto/
+sdkconfig.transceptor

@@ -58,6 +58,7 @@ except ImportError:
 FEND, FESC, TFEND, TFESC = 0xC0, 0xDB, 0xDC, 0xDD
 
 CMD_INICIO, CMD_VOZ, CMD_FIN, CMD_CONFIG, CMD_ESTADO = 1, 2, 3, 4, 5
+CMD_AUDIO = 0x1A
 CMD_CONFIRMA, CMD_IDENT, CMD_RED, CMD_ENLACE = 0x09, 0x0E, 0x0F, 0x10
 CMD_RADIO = 0x0A
 CMD_AMPLI = 0x14
@@ -320,6 +321,30 @@ def main():
     if cmd == 'estado':
         n.manda(CMD_ESTADO)
         for t, p in n.lee(2.0):
+            pinta(t, p)
+
+    elif cmd == 'audio':
+        # Solo firmwares con AUDIO_LOCAL. `audio` = estado; `audio banco 20 [nucleo]`
+        # mide Codec2 con todo en marcha SIN emitir; `audio prueba [veces]` HABLA
+        # la voz grabada POR EL AIRE; `audio para`.
+        sub = pos[1] if len(pos) > 1 else 'estado'
+        if sub == 'banco':
+            seg = int(pos[2]) if len(pos) > 2 else 20
+            datos = bytes([2, seg & 0xFF]) + (bytes([int(pos[3])]) if len(pos) > 3 else b'')
+            espera = seg * 1.5 + 10    # referencia sin codec + hablar + escuchar
+        elif sub == 'prueba':
+            veces = int(pos[2]) if len(pos) > 2 else 3
+            datos, espera = bytes([1, veces]), veces + 4
+        elif sub == 'baliza':
+            periodo = int(pos[2]) if len(pos) > 2 else 60
+            minutos = int(pos[3]) if len(pos) > 3 else 30
+            datos, espera = bytes([4, min(periodo, 255), min(minutos, 120)]), 2
+        elif sub == 'para':
+            datos, espera = bytes([3]), 1
+        else:
+            datos, espera = bytes([0]), 1.5
+        n.manda(CMD_AUDIO, datos)
+        for t, p in n.lee(espera):
             pinta(t, p)
 
     elif cmd == 'config':

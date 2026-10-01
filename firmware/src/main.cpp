@@ -44,6 +44,9 @@
 #include <ArduinoOTA.h>
 #include <WiFiUdp.h>
 #include <Update.h>
+#ifdef AUDIO_LOCAL
+#include "audio_local.h"
+#endif
 #include <esp_system.h>
 #include <NimBLEDevice.h>
 #include <sys/select.h>
@@ -709,7 +712,7 @@ static uint8_t cola_n = 0;
  *     nodo, que por radio no se oirian entre ellos (el nodo no escucha sus
  *     propias emisiones).
  */
-enum : uint8_t { TUBO_LIBRE = 0, TUBO_USB, TUBO_BT, TUBO_TCP, TUBO_ENLACE };
+enum : uint8_t { TUBO_LIBRE = 0, TUBO_USB, TUBO_BT, TUBO_TCP, TUBO_ENLACE, TUBO_LOCAL };
 
 /* El buffer de desentramado del cable y del Bluetooth es grande porque por ahi
    pasan los trozos del firmware en una actualizacion; los clientes de WiFi solo
@@ -737,7 +740,15 @@ enum : uint8_t { TUBO_LIBRE = 0, TUBO_USB, TUBO_BT, TUBO_TCP, TUBO_ENLACE };
    y no podria salir hacia C. Cada ranura puede ser saliente (host configurado)
    o entrante, indistintamente. */
 #define ENLACES_N     4
+/* Y con AUDIO_LOCAL, uno mas al final: el microfono y el altavoz de la propia
+   placa. No lleva buffer ni socket; `kiss_a` no le escribe nada (el audio le
+   llega por `audio_rx`), y los bucles de enlaces se cortan en T_ENLN para que
+   no lo recorran. */
+#ifdef AUDIO_LOCAL
+#define TUBOS_N       (2 + TCP_N + ENLACES_N + 1)
+#else
 #define TUBOS_N       (2 + TCP_N + ENLACES_N)
+#endif
 
 struct Tubo {
     uint8_t   clase = TUBO_LIBRE;
@@ -760,6 +771,10 @@ static Tubo tubos[TUBOS_N];
 #define T_TCP0    2
 #define T_ENL0    (2 + TCP_N)                 // primera ranura de enlace
 #define T_ENL     T_ENL0                       // (el primero, para lo que mire uno solo)
+#define T_ENLN    (T_ENL0 + ENLACES_N)         // uno despues del ultimo enlace
+#ifdef AUDIO_LOCAL
+#define T_LOCAL   T_ENLN                       // el audio de la propia placa
+#endif
 
 /* Arbitraje del microfono. Con varios usuarios colgados del mismo nodo solo
    puede hablar uno: el canal es simplex y el nodo tiene una sola radio. El que
@@ -976,7 +991,7 @@ static bool apuntar(uint32_t src, uint8_t stream, uint8_t seq, uint8_t tipo,
    mandarlos, y tampoco tiene nada que contar de Internet. */
 static bool hay_enlace()
 {
-    for (int i = T_ENL0; i < TUBOS_N; i++)
+    for (int i = T_ENL0; i < T_ENLN; i++)
         if (tubos[i].clase == TUBO_ENLACE) return true;
     return false;
 }
@@ -1174,6 +1189,13 @@ static void entrega_al_anfitrion(const uint8_t *b, uint8_t len, float rssi,
 {
     uint8_t tipo   = b[2] >> 4;
     uint8_t stream = b[6], seq = b[7];
+#ifdef AUDIO_LOCAL
+    /* Al altavoz de la placa, lo mismo que a un movil: lo del aire y lo de los
+       otros clientes del nodo. Lo suyo propio no (salvo == T_LOCAL). */
+    if (salvo != T_LOCAL && (tipo == T_INICIO || tipo == T_VOZ || tipo == T_FIN))
+        audio_rx(tipo, b + CAB_LEN, len - CAB_LEN,
+                 ((uint32_t)b[3] << 16) | ((uint32_t)b[4] << 8) | b[5], stream);
+#endif
     uint8_t out[8 + MAX_PAYLOAD];
     uint8_t n = 0;
     out[n++] = (uint8_t)(int8_t)constrain((int)rssi, -128, 127);
@@ -1309,7 +1331,7 @@ static void vigila_ptt()
    lo que vuelve rebotado ya esta apuntado con su (src, stream, seq, tipo). */
 static void reparte_al_enlace(const uint8_t *b, uint8_t len, int salvo)
 {
-    for (int i = T_ENL0; i < TUBOS_N; i++)
+    for (int i = T_ENL0; i < T_ENLN; i++)
         if (i != salvo && tubos[i].clase == TUBO_ENLACE)
             kiss_a(tubos[i], CMD_AIRE, b, len);
 }
@@ -1633,7 +1655,7 @@ static void pinta()
     }
     {
         uint8_t enl = 0;
-        for (int i = T_ENL0; i < TUBOS_N; i++)
+        for (int i = T_ENL0; i < T_ENLN; i++)
             if (tubos[i].clase == TUBO_ENLACE) enl++;
         if (enl) {
             oled.setCursor(104, 34);
@@ -2073,7 +2095,7 @@ static String red_texto()
     for (int k = 0; k < SALIENTES_N; k++) {
         if (enlace_host[k].length() == 0) continue;
         bool pie = false;
-        for (int i = T_ENL0; i < TUBOS_N; i++)
+        for (int i = T_ENL0; i < T_ENLN; i++)
             if (tubos[i].clase == TUBO_ENLACE && tubos[i].salida_k == k) pie = true;
         r += " enlace=" + enlace_host[k] + ":" + String(enlace_puerto[k]) +
              (pie ? "(en pie)" : "(caido)");
@@ -2084,7 +2106,7 @@ static String red_texto()
              (pie ? "(en pie)" : "(caido)");
     }
     uint8_t entrantes = 0;
-    for (int i = T_ENL0; i < TUBOS_N; i++)
+    for (int i = T_ENL0; i < T_ENLN; i++)
         if (tubos[i].clase == TUBO_ENLACE && tubos[i].salida_k < 0) entrantes++;
     if (entrantes) r += " entrantes=" + String(entrantes);
     return r;
@@ -2870,6 +2892,28 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
         break;
     }
 
+#ifdef AUDIO_LOCAL
+    /* [sub][...]: 0 estado · 1 prueba [veces] · 2 banco [segundos] [nucleo] · 3 parar
+       · 4 baliza [periodo_s] [minutos]  (periodo 0 = apagar) */
+    case CMD_AUDIO: {
+        uint8_t sub = n ? d[0] : 0;
+        if (sub == 1) {
+            audio_prueba(n > 1 ? d[1] : 3);
+        } else if (sub == 2) {
+            audio_banco(n > 1 ? d[1] : 20, n > 2 ? (int8_t)d[2] : -1);
+            log_txt("banco de audio en marcha: el resultado sale al acabar");
+        } else if (sub == 3) {
+            audio_para();
+        } else if (sub == 4) {
+            audio_baliza(n > 1 ? d[1] : 60, n > 2 ? d[2] : 30);
+        } else {
+            char m[400];
+            audio_estado(m, sizeof m);
+            log_txt(m);
+        }
+        break;
+    }
+#endif
     case CMD_REINICIA: {
         if (ota_curso) { log_txt("no reinicio: hay una actualizacion en curso"); break; }
         if (transmitiendo) { log_txt("no reinicio: se esta transmitiendo"); break; }
@@ -2901,7 +2945,7 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
             for (int i = 0; i < SALIENTES_N; i++) {
                 enlace_host[i] = ""; enlace_puerto[i] = 0;
             }
-            for (int i = T_ENL0; i < TUBOS_N; i++)
+            for (int i = T_ENL0; i < T_ENLN; i++)
                 if (tubos[i].clase == TUBO_ENLACE) cierra_tubo(i);
             guarda_ajustes();
             log_txt("enlaces soltados");
@@ -3758,7 +3802,7 @@ static void atiende_clientes()
     WiFiClient e = srv_enlace.available();
     if (e) {
         int libre = -1;
-        for (int i = T_ENL0; i < TUBOS_N; i++)
+        for (int i = T_ENL0; i < T_ENLN; i++)
             if (tubos[i].clase == TUBO_LIBRE) { libre = i; break; }
         if (libre < 0) { e.stop(); }
         else {
@@ -3847,7 +3891,7 @@ static void atiende_enlace()
         // ¿Ya tiene ranura este destino? ¿Y hay alguno preferente en pie?
         bool puesto = false, hay_mejor = false;
         int libre = -1;
-        for (int i = T_ENL0; i < TUBOS_N; i++) {
+        for (int i = T_ENL0; i < T_ENLN; i++) {
             if (tubos[i].clase == TUBO_ENLACE) {
                 if (tubos[i].salida_k == k) puesto = true;
                 if (tubos[i].salida_k >= 0 && tubos[i].salida_k < k) hay_mejor = true;
@@ -3858,7 +3902,7 @@ static void atiende_enlace()
             /* El preferente ha vuelto: se suelta el respaldo, o nos quedariamos
                colgados de los dos para siempre. */
             if (puesto)
-                for (int i = T_ENL0; i < TUBOS_N; i++)
+                for (int i = T_ENL0; i < T_ENLN; i++)
                     if (tubos[i].clase == TUBO_ENLACE && tubos[i].salida_k == k) {
                         log_txt("respaldo soltado: el reflector principal ha vuelto");
                         cierra_tubo(i);
@@ -3991,6 +4035,12 @@ void setup()
     tubos[T_USB].cap = KISS_MAX;
     tubos[T_BT].buf = buf_bt;
     tubos[T_BT].cap = KISS_MAX;
+#ifdef AUDIO_LOCAL
+    tubos[T_LOCAL].clase = TUBO_LOCAL;
+    tubos[T_LOCAL].autorizado = true;
+    audio_log = log_txt;
+    audio_arranca(AUDIO_PIN_PTT);
+#endif
 
     pinMode(P_LED, OUTPUT);
     digitalWrite(P_LED, LOW);
@@ -4060,8 +4110,41 @@ void setup()
     manda_estado();
 }
 
+#ifdef AUDIO_LOCAL
+/* Lo que la tarea de audio tiene listo, emitido desde AQUI y por orden():
+   el mismo camino que la voz de la app, con su arbitraje y su TOT. */
+static void atiende_audio()
+{
+    audio_latido_loop();
+    AudioTx t;
+    while (audio_saca_tx(&t)) {
+        uint8_t d[2 + AUDIO_LOTE_MAX];
+        switch (t.tipo) {
+        case AUD_INICIO:
+            d[0] = t.modo;
+            orden(CMD_INICIO, d, 1, T_LOCAL);
+            if (ptt_de != T_LOCAL)
+                audio_ptt_denegado(canal_ocupado ? "canal ocupado" : "otro tiene el PTT");
+            break;
+        case AUD_VOZ:
+            d[0] = t.modo;
+            d[1] = t.n;
+            memcpy(d + 2, t.datos, t.len);
+            orden(CMD_VOZ, d, 2 + t.len, T_LOCAL);
+            break;
+        case AUD_FIN:
+            orden(CMD_FIN, nullptr, 0, T_LOCAL);
+            break;
+        }
+    }
+}
+#endif
+
 void loop()
 {
+#ifdef AUDIO_LOCAL
+    atiende_audio();
+#endif
     if (hay_paquete) {
         hay_paquete = false;
         uint8_t b[CAB_LEN + MAX_PAYLOAD];
