@@ -1576,7 +1576,8 @@ static void gestiona_pantalla()
  *     un S-metro se lea y no baile.
  *   - y un icono diminuto de Bluetooth en la esquina: fijo con el micro
  *     enganchado, parpadeando si el emparejado no esta, nada si no hay
- *     ninguno. Sin el no habria forma de saber por que no suena.
+ *     ninguno. Sin el no habria forma de saber por que no suena. Y en la
+ *     esquina contraria una torre si hay una celda a la vista.
  * El aviso del TOT ocupa el sitio del indicativo los ultimos 15 s, parpadeando.
  * ⚠️ La fuente de Adafruit GFX es de 7 bits: TEXTO SIN TILDES. */
 static uint8_t bateria_pct();
@@ -1697,6 +1698,20 @@ static int pinta_alimentacion(uint8_t pct)
     return 19;
 }
 
+/* Torre con ondas, 11x8: hay una celda a la vista. */
+static void icono_celda(int x, int y)
+{
+    oled.drawLine(x + 5, y + 1, x + 2, y + 7, SSD1306_WHITE);    // patas
+    oled.drawLine(x + 5, y + 1, x + 8, y + 7, SSD1306_WHITE);
+    oled.drawLine(x + 4, y + 5, x + 6, y + 5, SSD1306_WHITE);    // travesaño
+    oled.drawPixel(x + 1, y, SSD1306_WHITE);                      // ondas
+    oled.drawLine(x, y + 1, x, y + 2, SSD1306_WHITE);
+    oled.drawPixel(x + 1, y + 3, SSD1306_WHITE);
+    oled.drawPixel(x + 9, y, SSD1306_WHITE);
+    oled.drawLine(x + 10, y + 1, x + 10, y + 2, SSD1306_WHITE);
+    oled.drawPixel(x + 9, y + 3, SSD1306_WHITE);
+}
+
 static void pinta_transceptor()
 {
     uint32_t ahora = millis();
@@ -1765,6 +1780,10 @@ static void pinta_transceptor()
     if (fase == HFP_LISTO ||
         ((fase == HFP_BUSCANDO || fase == HFP_SIN_AUDIO) && ((ahora / 500) & 1)))
         icono_bt(1, 56);
+    /* Enfrente, la CELDA: fija si se oyen sus balizas, nada si no (entonces
+       la placa esta en malla y repite ella). Es el mismo criterio con el que
+       el nodo decide si repetir. */
+    if (pantalla_demo || hay_celda_a_la_vista()) icono_celda(116, 56);
 
     oled.display();
     redibujar = false;
