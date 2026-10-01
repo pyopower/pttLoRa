@@ -59,7 +59,7 @@ botón PRG / pulsador / botones del micro / consola ──► ptt ──► audi
 | `audio boton 0\|1\|2` | Botón PRG: solo pantalla, PTT mientras se mantiene (por defecto) o conmutador |
 | `audio wifi 0\|1` | WiFi del transceptor (apagado por defecto) |
 | `audio banco 16` | Mide Codec2 con todo en marcha, **sin emitir** |
-| `audio captura [1\|2]` | Vuelca la pantalla por USB (128×64 en texto); 1 y 2 = demostración de TX y RX con datos inventados, **sin emitir** |
+| `audio captura [1\|2\|3]` | Vuelca la pantalla por USB (128×64 en texto); 1, 2 y 3 = demostración de TX, RX y reposo con pila, con datos inventados, **sin emitir** |
 
 PTT del micro: botones de volumen (vol− abre, vol+ cierra, como en el v0), «asistente de
 voz» (BVRA) y cualquier orden AT no estándar que contenga `PTT` (`=P`/`=R`, `=1`/`=0`,

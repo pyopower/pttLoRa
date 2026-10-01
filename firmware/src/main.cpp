@@ -1580,8 +1580,8 @@ static void gestiona_pantalla()
  * ⚠️ La fuente de Adafruit GFX es de 7 bits: TEXTO SIN TILDES. */
 static uint8_t bateria_pct();
 
-/* DEMOSTRACION para `audio captura N`: dibuja la pantalla de TX (1) o de RX
-   (2) con datos inventados, SIN emitir nada. Sirve para ver y ajustar el
+/* DEMOSTRACION para `audio captura N`: dibuja la pantalla de TX (1), de RX
+   (2) o de reposo con pila (3) con datos inventados, SIN emitir nada. Sirve para ver y ajustar el
    diseño desde otra maquina; no toca la radio ni el arbitraje. */
 static uint8_t pantalla_demo = 0;
 
@@ -1672,13 +1672,39 @@ static void icono_bt(int x, int y)
     oled.drawLine(x + 4, y + 5, x, y + 2, SSD1306_WHITE);
 }
 
+/* EN REPOSO, en el sitio de RX/TX: la pila con su porcentaje, o un rayo si
+   no hay pila que medir (por USB sin bateria `bateria_pct()` dice 0: el pin
+   flota y no se inventa un numero). Devuelve donde acaba, en x. */
+static int pinta_alimentacion(uint8_t pct)
+{
+    if (!pct) {
+        /* Rayo, 7x9. */
+        oled.drawLine(5, 0, 1, 4, SSD1306_WHITE);
+        oled.drawLine(1, 4, 5, 4, SSD1306_WHITE);
+        oled.drawLine(5, 4, 1, 8, SSD1306_WHITE);
+        oled.drawLine(6, 0, 2, 4, SSD1306_WHITE);
+        oled.drawLine(6, 4, 2, 8, SSD1306_WHITE);
+        return 10;
+    }
+    /* Pila de 12x7 con su borne, rellena en proporcion. */
+    oled.drawRect(0, 1, 12, 7, SSD1306_WHITE);
+    oled.fillRect(12, 3, 2, 3, SSD1306_WHITE);
+    int lleno = (pct * 10 + 50) / 100;
+    if (lleno) oled.fillRect(1, 2, lleno, 5, SSD1306_WHITE);
+    char b[6];
+    snprintf(b, sizeof b, "%u%%", pct);
+    oled.setCursor(17, 1);
+    oled.print(b);
+    return 17 + 6 * (int)strlen(b) + 4;
+}
+
 static void pinta_transceptor()
 {
     uint32_t ahora = millis();
     bool tx = transmitiendo || pantalla_demo == 1;
     bool rx = !tx && (canal_ocupado || pantalla_demo == 2);
     uint32_t desde = pantalla_demo == 1 ? ahora - 47000 : t_ptt;
-    const char *quien = pantalla_demo == 2 ? "EA3ABC-7" : hablante;
+    const char *quien = pantalla_demo >= 2 ? "EA3ABC-7" : hablante;
     int dbm = pantalla_demo == 2 ? -87 : hablante_rssi;
     bool por_rf = pantalla_demo == 2 || hablante_rf;
 
@@ -1704,25 +1730,31 @@ static void pinta_transceptor()
         oled.setCursor(2, 1);
         oled.print(tx ? "TX" : "RX");
         oled.setTextColor(SSD1306_WHITE);
-    } else {
-        oled.setCursor(2, 1);
-        oled.print("--");
     }
-    oled.setCursor(19, 1);
+    char fq[10];
+    snprintf(fq, sizeof fq, "%.3f", frecuencia);
+    int x_fq = 128 - 6 * (int)strlen(fq);
+    int x_txt = 19;
+    if (!tx && !rx) x_txt = pinta_alimentacion(pantalla_demo == 3 ? 76 : bateria_pct());
+    /* Lo que quepa entre el principio y la frecuencia. */
+    int cabe = (x_fq - 4 - x_txt) / 6;
+    if (cabe < 0) cabe = 0;
+    oled.setCursor(x_txt, 1);
     if (tx) {
         uint32_t s = (ahora - desde) / 1000;
         uint32_t queda = PTT_MAX_MS / 1000 > s ? PTT_MAX_MS / 1000 - s : 0;
         if (queda <= 15) { if ((ahora / 300) & 1) oled.printf("TOT %lus", (unsigned long)queda); }
-        else oled.printf("%.10s", mi_indicativo);
+        else oled.printf("%.*s", cabe, mi_indicativo);
     } else if (rx) {
-        oled.printf("%.10s", quien[0] ? quien : "?");
+        oled.printf("%.*s", cabe, quien[0] ? quien : "?");
     } else {
+        /* El aviso de un corte se puede recortar; un indicativo NO: a medias
+           puede ser el de otra estacion. Entero o nada. */
         const char *corte = ptt_ultimo_corte();
-        oled.printf("%.10s", corte[0] ? corte : quien);
+        if (corte[0]) oled.printf("%.*s", cabe, corte);
+        else if ((int)strlen(quien) <= cabe) oled.print(quien);
     }
-    char fq[10];
-    snprintf(fq, sizeof fq, "%.3f", frecuencia);
-    oled.setCursor(128 - 6 * (int)strlen(fq), 1);
+    oled.setCursor(x_fq, 1);
     oled.print(fq);
 
     instrumento(aguja);
