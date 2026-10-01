@@ -1561,109 +1561,175 @@ static void gestiona_pantalla()
 }
 
 #ifdef AUDIO_BT
-/* LA PANTALLA DEL TRANSCEPTOR. Sin movil, la OLED es el UNICO instrumento, asi
- * que lleva lo que solo ella puede decir (validada en el banco el 20-sep):
- *   - indicativo y bateria arriba;
- *   - TX / RX / -- en grande, con el detalle al lado: al aire N s y el TOT en
- *     cuenta atras (parpadea el ultimo cuarto de minuto), o quien habla con dBm
- *     y S-metro, o la ultima voz oida;
- *   - el micro Bluetooth en tres pasos: es lo que falla, y hay que saber en
- *     cual se quedo;
- *   - el canal y los contadores.
+/* LA PANTALLA DEL TRANSCEPTOR: UN S-METRO DE AGUJA, COMO UN CB DE TODA LA VIDA.
+ *
+ * Sin movil, la OLED es el unico instrumento, y lo que se mira de reojo con la
+ * radio en el cinturon es poco: si se transmite o se recibe, quien, y con
+ * cuanto. Asi que solo hay eso (decision del usuario, 1-oct-2026):
+ *   - arriba, RX/TX en video inverso, el indicativo de quien habla (el propio
+ *     en TX) y la frecuencia;
+ *   - un instrumento de aguja con DOBLE ESCALA, como los de 27 MHz: S arriba
+ *     (1-3-5-7-9 y +20/+40, S9 = -93 dBm, la escala IARU de la app) y PWR en mW
+ *     abajo. En RX la aguja marca la señal; en TX, la potencia (nominal: el
+ *     SX1278 no mide lo que sale).
+ *   - la aguja con INERCIA: sube rapido y cae despacio, que es lo que hace que
+ *     un S-metro se lea y no baile.
+ *   - y un icono diminuto de Bluetooth en la esquina, que PARPADEA si el micro
+ *     no esta enganchado: sin el no habria forma de saber por que no suena.
+ * El aviso del TOT ocupa el sitio del indicativo los ultimos 15 s, parpadeando.
  * ⚠️ La fuente de Adafruit GFX es de 7 bits: TEXTO SIN TILDES. */
 static uint8_t bateria_pct();
-
-/* Ocho segmentos entre -110 (por debajo no se descodifica) y -55 dBm (por
-   encima da igual cuanto sobre): de un vistazo, si queda margen. */
-static void smetro(int x, int y, int dbm)
-{
-    int n = (dbm + 110) / 7;
-    if (n < 0) n = 0;
-    if (n > 8) n = 8;
-    for (int i = 0; i < 8; i++) {
-        if (i < n) oled.fillRect(x + i * 6, y, 5, 7, SSD1306_WHITE);
-        else       oled.drawRect(x + i * 6, y, 5, 7, SSD1306_WHITE);
-    }
-}
 
 /* DEMOSTRACION para `audio captura N`: dibuja la pantalla de TX (1) o de RX
    (2) con datos inventados, SIN emitir nada. Sirve para ver y ajustar el
    diseño desde otra maquina; no toca la radio ni el arbitraje. */
 static uint8_t pantalla_demo = 0;
 
+/* Geometria del instrumento: el eje de la aguja cae POR DEBAJO de la pantalla,
+   asi el arco es ancho y plano como el de un medidor de verdad. */
+static const float AG_X = 64, AG_Y = 100, AG_R = 78, AG_ANG = 40.0f * PI / 180;
+
+static void punto_arco(float f, float r, int &x, int &y)
+{
+    float a = -AG_ANG + 2 * AG_ANG * f;
+    x = (int)lroundf(AG_X + r * sinf(a));
+    y = (int)lroundf(AG_Y - r * cosf(a));
+}
+
+static void etiqueta(float f, float r, const char *s)
+{
+    int x, y;
+    punto_arco(f, r, x, y);
+    int w = 6 * (int)strlen(s) - 1;
+    x -= w / 2;
+    if (x < 0) x = 0;
+    if (x > 128 - w - 1) x = 128 - w - 1;     // que el "+40" no se salga
+    oled.setCursor(x, y - 3);
+    oled.print(s);
+}
+
+/* De dBm a la escala S: S9 = -93 dBm y 6 dB por unidad (IARU, VHF/UHF), que
+   ocupa el 60 % del arco; de S9 a +40 dB, el resto. */
+static float escala_s(int dbm)
+{
+    float f = dbm <= -93 ? (dbm + 147) / 54.0f * 0.6f : 0.6f + (dbm + 93) / 40.0f * 0.4f;
+    return f < 0 ? 0 : (f > 1 ? 1 : f);
+}
+
+static const float PWR_MAX_MW = 50;            // 17 dBm, el tope del SX1278
+static float aguja = 0;                         // donde esta la aguja (0..1)
+
+static void instrumento(float aguja)
+{
+    /* El arco, con la zona de S9 en adelante en trazo doble, como el rojo de
+       los medidores de verdad. */
+    for (float f = 0; f <= 1.0001f; f += 0.004f) {
+        int x, y;
+        punto_arco(f, AG_R, x, y);
+        oled.drawPixel(x, y, SSD1306_WHITE);
+        if (f >= 0.6f) { punto_arco(f, AG_R - 1, x, y); oled.drawPixel(x, y, SSD1306_WHITE); }
+    }
+    /* Escala S, por fuera. */
+    static const float MARCA_S[] = { 0.0667f, 0.2f, 0.333f, 0.467f, 0.6f, 0.8f, 1.0f };
+    static const char *TXT_S[]   = { "1", "3", "5", "7", "9", "+20", "+40" };
+    for (int i = 0; i < 7; i++) {
+        int x0, y0, x1, y1;
+        punto_arco(MARCA_S[i], AG_R, x0, y0);
+        punto_arco(MARCA_S[i], AG_R + 4, x1, y1);
+        oled.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+        etiqueta(MARCA_S[i], AG_R + 9, TXT_S[i]);
+    }
+    /* Escala de potencia, por dentro: marcas cada 10 mW y numeros solo en
+       10, 25 y 50, que con mas no se lee nada en 128 puntos. */
+    for (int mw = 10; mw <= 50; mw += 10) {
+        int x0, y0, x1, y1;
+        punto_arco(mw / PWR_MAX_MW, AG_R, x0, y0);
+        punto_arco(mw / PWR_MAX_MW, AG_R - 3, x1, y1);
+        oled.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+    }
+    etiqueta(10 / PWR_MAX_MW, AG_R - 11, "10");
+    etiqueta(25 / PWR_MAX_MW, AG_R - 11, "25");
+    etiqueta(50 / PWR_MAX_MW, AG_R - 11, "50");
+    /* Las unidades, donde las pone un medidor de verdad. */
+    oled.setCursor(1, 22);
+    oled.print("S");
+    oled.setCursor(58, 45);
+    oled.print("mW");
+    /* La aguja, del eje (fuera de la pantalla) al arco. */
+    int x0, y0, x1, y1;
+    punto_arco(aguja, 0, x0, y0);
+    punto_arco(aguja, AG_R + 2, x1, y1);
+    oled.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+}
+
+/* Bluetooth: el rune de siempre, 5x8 puntos. */
+static void icono_bt(int x, int y)
+{
+    oled.drawLine(x + 2, y, x + 2, y + 7, SSD1306_WHITE);
+    oled.drawLine(x + 2, y, x + 4, y + 2, SSD1306_WHITE);
+    oled.drawLine(x + 4, y + 2, x, y + 5, SSD1306_WHITE);
+    oled.drawLine(x + 2, y + 7, x + 4, y + 5, SSD1306_WHITE);
+    oled.drawLine(x + 4, y + 5, x, y + 2, SSD1306_WHITE);
+}
+
 static void pinta_transceptor()
 {
     uint32_t ahora = millis();
-    oled.setTextSize(1);
-    oled.setTextColor(SSD1306_WHITE);
-    oled.setCursor(0, 0);
-    oled.print(mi_indicativo);
-    uint8_t bat = bateria_pct();
-    if (bat) {
-        char b[8];
-        snprintf(b, sizeof b, "%u%%", bat);
-        oled.setCursor(128 - 6 * (int)strlen(b), 0);
-        oled.print(b);
-    }
-    oled.drawFastHLine(0, 10, 128, SSD1306_WHITE);
-
     bool tx = transmitiendo || pantalla_demo == 1;
     bool rx = !tx && (canal_ocupado || pantalla_demo == 2);
     uint32_t desde = pantalla_demo == 1 ? ahora - 47000 : t_ptt;
     const char *quien = pantalla_demo == 2 ? "EA3ABC-7" : hablante;
     int dbm = pantalla_demo == 2 ? -87 : hablante_rssi;
     bool por_rf = pantalla_demo == 2 || hablante_rf;
-    oled.setTextSize(2);
-    oled.setCursor(0, 14);
-    oled.print(tx ? "TX" : (rx ? "RX" : "--"));
+
+    /* La aguja: el objetivo, y la inercia hacia el. */
+    float mw = powf(10.0f, potencia / 10.0f);
+    float objetivo = tx ? mw / PWR_MAX_MW : (rx && por_rf ? escala_s(dbm) : 0);
+    if (pantalla_demo) aguja = objetivo;
+    else if (objetivo > aguja) aguja += (objetivo - aguja) * 0.6f;   // sube rapido
+    else aguja += (objetivo - aguja) * 0.2f;                         // cae despacio
+    if (objetivo > 1) aguja = 1;
+
+    oled.clearDisplay();
     oled.setTextSize(1);
-    oled.setCursor(34, 14);
+    oled.setTextColor(SSD1306_WHITE);
+    /* ⚠️ Sin esto, la letra que no cabe a la derecha se va a la linea de abajo
+       y por la IZQUIERDA: el "0" del "+40" aparecia junto a la "S". */
+    oled.setTextWrap(false);
+
+    /* Cabecera: RX/TX en inverso, quien, y la frecuencia. */
+    if (tx || rx) {
+        oled.fillRect(0, 0, 15, 9, SSD1306_WHITE);
+        oled.setTextColor(SSD1306_BLACK);
+        oled.setCursor(2, 1);
+        oled.print(tx ? "TX" : "RX");
+        oled.setTextColor(SSD1306_WHITE);
+    } else {
+        oled.setCursor(2, 1);
+        oled.print("--");
+    }
+    oled.setCursor(19, 1);
     if (tx) {
         uint32_t s = (ahora - desde) / 1000;
         uint32_t queda = PTT_MAX_MS / 1000 > s ? PTT_MAX_MS / 1000 - s : 0;
-        oled.printf("al aire %lus", (unsigned long)s);
-        oled.setCursor(34, 24);
-        /* Si te van a callar a mitad de frase, tienes que haberlo visto venir. */
-        if (queda <= 15) { if ((ahora / 300) & 1) oled.printf("TOT EN %lus", (unsigned long)queda); }
-        else oled.printf("queda %lu:%02lu", (unsigned long)(queda / 60), (unsigned long)(queda % 60));
+        if (queda <= 15) { if ((ahora / 300) & 1) oled.printf("TOT %lus", (unsigned long)queda); }
+        else oled.printf("%.10s", mi_indicativo);
     } else if (rx) {
-        oled.printf("%.15s", quien[0] ? quien : "alguien");
-        oled.setCursor(34, 24);
-        if (por_rf) {
-            oled.printf("%d", dbm);
-            smetro(80, 24, dbm);
-        } else {
-            oled.print("por la red");
-        }
+        oled.printf("%.10s", quien[0] ? quien : "?");
     } else {
         const char *corte = ptt_ultimo_corte();
-        oled.printf("%.15s", corte[0] ? corte : "en escucha");
-        oled.setCursor(34, 24);
-        if (quien[0]) {
-            oled.printf("ult %.10s", quien);
-            if (por_rf) oled.printf(" %d", dbm);
-        } else {
-            oled.print("sin trafico aun");
-        }
+        oled.printf("%.10s", corte[0] ? corte : quien);
     }
+    char fq[10];
+    snprintf(fq, sizeof fq, "%.3f", frecuencia);
+    oled.setCursor(128 - 6 * (int)strlen(fq), 1);
+    oled.print(fq);
 
-    oled.setCursor(0, 36);
-    switch (pantalla_demo ? (uint8_t)HFP_LISTO : hfp_fase()) {
-    case HFP_SIN_PILA:     oled.print("micro: SIN BLUETOOTH"); break;
-    case HFP_SIN_VINCULAR: oled.print("micro: sin vincular"); break;
-    case HFP_BUSCANDO:     oled.print("micro: buscando..."); break;
-    case HFP_SIN_AUDIO:    oled.print("micro: sin audio"); break;
-    default:
-        oled.printf("micro: %.14s", pantalla_demo ? "Abbree AP-W1" : (hfp_nombre()[0] ? hfp_nombre() : "listo"));
-        break;
-    }
+    instrumento(aguja);
 
-    oled.setCursor(0, 46);
-    oled.printf("%.3f sf%u %udBm", frecuencia, (unsigned)sf, potencia);
+    bool micro = pantalla_demo || hfp_fase() == HFP_LISTO;
+    if (micro || ((ahora / 500) & 1)) icono_bt(1, 56);
 
-    oled.setCursor(0, 56);
-    oled.printf("tx%lu rx%lu v%u %uk", (unsigned long)n_tx, (unsigned long)n_rx,
-                (unsigned)cuenta_vecinos(0), (unsigned)(ESP.getFreeHeap() / 1024));
     oled.display();
     redibujar = false;
     t_pantalla = millis();
@@ -4448,9 +4514,10 @@ void loop()
     // Refresco de pantalla: por evento, y en todo caso una vez por segundo para
     // que el estado del canal y la bateria no se queden congelados.
 #ifdef AUDIO_BT
-    /* En el transceptor, cada 250 ms mientras se habla o se escucha: el
-       contador de segundos, el aviso del TOT y el S-metro se mueven. */
-    if (redibujar || millis() - t_pantalla > ((transmitiendo || canal_ocupado) ? 250u : 1000u)) pinta();
+    /* En el transceptor, cada 100 ms mientras se habla, se escucha o la aguja
+       vuelve a reposo: es lo que hace que se MUEVA como una de verdad. */
+    if (redibujar || millis() - t_pantalla > ((transmitiendo || canal_ocupado || aguja > 0.01f)
+                                              ? 100u : 1000u)) pinta();
 #else
     if (redibujar || millis() - t_pantalla > 1000) pinta();
 #endif
