@@ -1672,7 +1672,7 @@ static void icono_bt(int x, int y)
     oled.drawLine(x + 4, y + 5, x, y + 2, SSD1306_WHITE);
 }
 
-/* EN REPOSO, en el sitio de RX/TX: la pila con su porcentaje, o un rayo si
+/* EN REPOSO, en el sitio de RX/TX: la pila rellena segun la carga, o un rayo si
    no hay pila que medir (por USB sin bateria `bateria_pct()` dice 0: el pin
    flota y no se inventa un numero). Devuelve donde acaba, en x. */
 static int pinta_alimentacion(uint8_t pct)
@@ -1691,11 +1691,9 @@ static int pinta_alimentacion(uint8_t pct)
     oled.fillRect(12, 3, 2, 3, SSD1306_WHITE);
     int lleno = (pct * 10 + 50) / 100;
     if (lleno) oled.fillRect(1, 2, lleno, 5, SSD1306_WHITE);
-    char b[6];
-    snprintf(b, sizeof b, "%u%%", pct);
-    oled.setCursor(17, 1);
-    oled.print(b);
-    return 17 + 6 * (int)strlen(b) + 4;
+    /* Sin porcentaje, a proposito: el relleno basta para saber si queda, y
+       el sitio es para el indicativo (decision del usuario, 1-oct-2026). */
+    return 19;
 }
 
 static void pinta_transceptor()
