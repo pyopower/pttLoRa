@@ -22,11 +22,14 @@
  *
  * FUENTES Y SUMIDEROS
  * -------------------
- * Hoy hay una fuente de PRUEBA (un segundo de voz real grabada, en flash) y un
- * sumidero NULO (descodifica y mide, pero no suena). Son lo que hace falta para
- * medir con el firmware entero en marcha y para probar el camino completo por
- * el aire sin hardware de audio. Las de verdad —el adaptador del micro con
- * cable (ADC + DAC) o I2S— se enchufan en el mismo sitio sin tocar nada más.
+ * Fuentes: la voz grabada en flash (prueba y baliza) y el MICRO, que con
+ * -DAUDIO_BT es el micro-altavoz Bluetooth (ver audio_bt.h) y sin él es
+ * silencio —sirve para probar el PTT y el arbitraje sin hardware de audio—.
+ * Sumidero: el altavoz Bluetooth con -DAUDIO_BT, o uno NULO que descodifica y
+ * mide pero no suena. Lo recibido se guarda codificado (6 bytes por trama) y
+ * se descodifica a ritmo real, con un colchón contra el jitter de la radio.
+ *
+ * EL PTT es de `ptt.h`: aquí sólo se mira si está abajo.
  */
 #pragma once
 #include <Arduino.h>
@@ -44,10 +47,19 @@ struct AudioTx {
     uint8_t datos[AUDIO_LOTE_MAX];
 };
 
-/* Dónde escribe la tarea de audio lo que tiene que contar. Lo pone main.cpp. */
+/* Dónde escribe la tarea de audio lo que tiene que contar. Lo pone main.cpp, y
+   se llama SÓLO desde loop(): lo que cuentan la tarea de audio y la pila
+   Bluetooth se encola con `audio_dice()` y se vacía en `audio_latido_loop()`.
+   Escribir en los tubos desde otra tarea es pisarle el buffer a loop(). */
 extern void (*audio_log)(const char *);
+void audio_dice(const char *fmt, ...);                  // desde cualquier tarea
 
-void audio_arranca(int pin_ptt);
+/* Algo que merece encender la pantalla (el micro aparece o se va, un botón).
+   Desde cualquier tarea; loop() lo recoge con `audio_quiere_despertar()`. */
+void audio_despierta();
+bool audio_quiere_despertar();
+
+void audio_arranca(int pin_boton, int pin_ptt);
 bool audio_saca_tx(AudioTx *t);                         // desde loop()
 void audio_ptt_denegado(const char *motivo);            // el nodo no le dio el turno
 void audio_rx(uint8_t tipo, const uint8_t *cuerpo, uint8_t n, uint32_t src, uint8_t stream);
@@ -59,3 +71,11 @@ void audio_banco(uint16_t segundos, int8_t nucleo);    // medir con todo en marc
 void audio_baliza(uint16_t periodo_s, uint16_t minutos);  // 0 = apagar
 void audio_para();
 void audio_estado(char *s, size_t cap);
+void audio_orden(const uint8_t *d, uint16_t n);         // CMD_AUDIO entero
+
+/* El WiFi en el transceptor: APAGADO aunque haya una red guardada, salvo que
+   se pida (`audio wifi 1`). Con el audio Bluetooth en marcha se pierde ~10 %
+   del micro, y WiFi + Bluetooth Classic + Codec2 no caben juntos en la RAM con
+   holgura. La red guardada no se toca: sólo no se usa. */
+bool audio_wifi_permitido();
+void audio_wifi_permite(bool si);

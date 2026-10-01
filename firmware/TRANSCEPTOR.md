@@ -11,10 +11,62 @@ todavía en piezas sueltas. Se publica para poder trabajar sobre ella.
 
 | Dónde | Qué es | Estado |
 |---|---|---|
+| `firmware/` (`pio run -e transceptor`) | **El transceptor dentro del firmware principal**: malla, balizas, NVS y órdenes por USB, más el micro Bluetooth (`src/audio_bt.*`) como fuente y sumidero de `audio_local`, y el PTT separado de su origen (`src/ptt.*`) | 🟡 Compila y arranca en la placa, y el banco mide bien. **Sin probar todavía con micro ni en el aire** |
 | `bench/hfp-ag/` (`pio run -e transceptor`) | **Transceptor v0**: firmware aparte, HFP-AG + Codec2 1200 + LoRa + pantalla | ✅ Probado en el aire en los dos sentidos (micro JBL GO ↔ celda ↔ reflector ↔ app), sin WiFi |
 | `bench/hfp-ag/` (`pio run -e hfpag`) | Lo mismo pero la voz va por WiFi al reflector | Funciona, pero el WiFi y el audio Bluetooth se pisan (se pierde ~10 % del micro): queda como demostración |
-| `firmware/src/audio_local.*` (`pio run -e lora32-audio`) | Codec2 DENTRO del firmware principal, como un tubo más (`T_LOCAL`), con el mismo arbitraje de PTT, TOT y eco que la app | ✅ Baliza hablada codificada en la placa y oída en la app. Fuente de prueba y sumidero nulo: **todavía sin micro ni altavoz de verdad** |
+| `firmware/src/audio_local.*` (`pio run -e lora32-audio`) | Codec2 DENTRO del firmware principal, como un tubo más (`T_LOCAL`), con el mismo arbitraje de PTT, TOT y eco que la app | ✅ Baliza hablada codificada en la placa y oída en la app |
 | `bench/codec2-esp32/` | Banco de Codec2 en el ESP32 y generador de los libros de códigos | Lo usa `firmware/preparar-audio.sh` |
+
+## El entorno `transceptor` del firmware principal
+
+```
+micro BT ──SCO──► audio_bt (anillo + control de ganancia) ──► audio_local (Codec2) ──► T_LOCAL ──► orden() ──► aire / enlace
+altavoz  ◄──SCO── audio_bt (anillo + ganancia)            ◄── audio_local (colchón + ritmo real) ◄── entrega_al_anfitrion
+botón PRG / pulsador / botones del micro / consola ──► ptt ──► audio_local
+```
+
+- **Arduino como componente de ESP-IDF** (`framework = arduino, espidf`), con la
+  configuración en `firmware/sdkconfig.defaults` y `firmware/CMakeLists.txt`. Los demás
+  entornos siguen siendo Arduino a secas y no leen nada de eso.
+- **Sin BLE** (`-DSIN_BLE`): Bluedroid Classic y NimBLE no pueden convivir. No hay app
+  por Bluetooth; se configura por USB.
+- **WiFi apagado aunque haya red guardada.** Se enciende a propósito con
+  `nodo.py audio wifi 1`. Medido el 1-oct en nodoCASA: sin WiFi quedan **127 KB** de heap;
+  con WiFi y enlace, unos 85 KB, y con 67 KB `codec2_create` revienta (un assert en
+  `nlp_create`, no devuelve NULL). Por eso ahora cada códec se crea a través de
+  `crea_codec()`, que mira antes el heap libre y el bloque contiguo más grande, y si no
+  hay sitio lo dice y no habla.
+- **El TOT es el del nodo** (`vigila_ptt`, 3 min). Cuando corta a la propia placa se
+  avisa al audio (`audio_ptt_denegado`), que suelta el PTT: con un micro Bluetooth el PTT
+  es un conmutador y si no nadie lo soltaría.
+- **Lo recibido se guarda codificado** (6 B por trama) y se descodifica a ritmo real
+  cuando hay 6 tramas (240 ms) de colchón. Al altavoz va siempre algo, voz o silencio,
+  como en el v0, para que no haya chasquidos.
+- **Los avisos de la tarea de audio y de la pila Bluetooth van por una cola** y los
+  suelta `loop()`: escribir en los tubos desde otra tarea pisaba los buffers.
+- **Registro de ESP-IDF solo en ERROR**: va por la misma UART que el KISS.
+- La pantalla es la del v0, alimentada con el estado del nodo (`pinta_transceptor`).
+
+Órdenes (`tools/nodo.py`):
+
+| Orden | Qué hace |
+|---|---|
+| `audio` | Estado: PTT, códec, colchón, heap y bloque libre, y el micro Bluetooth |
+| `audio bt buscar` | 10 s buscando micros (el micro, en modo emparejar) |
+| `audio bt conecta AA:BB:CC:DD:EE:FF` | Lo vincula. Se recuerda en NVS y se reconecta solo cada 15 s |
+| `audio bt olvida` | Lo desvincula |
+| `audio ptt` | Abre o cierra el micro como un botón más. **EMITE** |
+| `audio boton 0\|1\|2` | Botón PRG: solo pantalla, PTT mientras se mantiene (por defecto) o conmutador |
+| `audio wifi 0\|1` | WiFi del transceptor (apagado por defecto) |
+| `audio banco 16` | Mide Codec2 con todo en marcha, **sin emitir** |
+
+PTT del micro: botones de volumen (vol− abre, vol+ cierra, como en el v0), «asistente de
+voz» (BVRA) y cualquier orden AT no estándar que contenga `PTT` (`=P`/`=R`, `=1`/`=0`,
+`ON`/`OFF`, `DOWN`/`UP`). Las órdenes AT que no se reconocen se apuntan en el registro:
+así se verá qué manda el Abbree.
+
+⚠️ **Abrir el puerto serie reinicia la placa** (el CH9102 mueve DTR/RTS). Para probar
+seguido conviene un proceso que lo tenga abierto todo el rato.
 
 ## Compilar
 
@@ -52,22 +104,13 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
 
 ## Siguiente (por orden)
 
-1. **Llevar el transceptor al firmware principal** como entorno `transceptor`
-   (`framework = arduino, espidf`), para que tenga malla, balizas, configuración
-   en NVS y órdenes por USB:
-   - un módulo de manos libres (HFP-AG) que sea la **fuente** (micro con su control
-     automático de ganancia) y el **sumidero** (altavoz a ritmo real, con colchón
-     contra el jitter) de `audio_local`;
-   - sin NimBLE en ese entorno: Bluedroid Classic y NimBLE no pueden convivir. El
-     transceptor no tiene app; se configura por USB;
-   - WiFi apagado por defecto, por la convivencia;
-   - la pantalla del v0 (TX/RX, S-metro, TOT, estado del micro, batería), alimentada
-     con el estado del nodo.
-2. **Separar el PTT de su origen**: un único sitio que reciba el botón de la placa
-   (GPIO 0 en la LoRa32, 38 en la T-Beam), un pulsador externo a masa, los botones
-   del micro Bluetooth y la consola. Habrá modo pulsador (mantener) y modo
-   conmutador (una pulsación abre y otra cierra). El TOT ya lo pone el nodo.
-3. El PTT del Abbree, cuando llegue: ver qué manda con el banco.
+1. ~~Llevar el transceptor al firmware principal~~ y ~~separar el PTT de su
+   origen~~: **hecho** (ver arriba). Falta **probarlo con un micro**: emparejar el JBL,
+   oír por el altavoz lo que llega de la red y, con permiso, hablar por el aire.
+2. Medir el heap mínimo hablando y escuchando con el micro enganchado. Si aprieta,
+   recortar la cola de recepción o los modos de Codec2 que se escuchan.
+3. El PTT del Abbree, cuando llegue: ver qué manda (las AT desconocidas salen en el
+   registro).
 4. Avisos hablados (prompts de Piper en Codec2 guardados en flash) y teclas
    auxiliares.
 5. Flasher web con un cuestionario mínimo (indicativo, potencia, canal) por WebSerial.

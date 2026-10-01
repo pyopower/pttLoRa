@@ -1,3 +1,5 @@
 
 # Codec2 para los firmwares con audio propio: se trae con preparar-audio.sh
 lib-audio/
+sdkconfig.transceptor
+sdkconfig.transceptor.old

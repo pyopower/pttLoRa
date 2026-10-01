@@ -327,6 +327,13 @@ def main():
         # Solo firmwares con AUDIO_LOCAL. `audio` = estado; `audio banco 20 [nucleo]`
         # mide Codec2 con todo en marcha SIN emitir; `audio prueba [veces]` HABLA
         # la voz grabada POR EL AIRE; `audio para`.
+        # Transceptor (micro Bluetooth): `audio bt buscar` (10 s, el micro en modo
+        # emparejar), `audio bt conecta AA:BB:CC:DD:EE:FF`, `audio bt olvida`.
+        # `audio ptt` abre o cierra el micro como un boton mas (EMITE);
+        # `audio boton [0|1|2]`: el boton de la placa solo despierta la pantalla,
+        # hace de PTT mientras se mantiene, o abre y cierra con cada pulsacion.
+        # `audio wifi [0|1]`: en el transceptor el WiFi va apagado aunque haya red
+        # guardada; con 1 se usa (cuesta ~10 % del micro y memoria).
         sub = pos[1] if len(pos) > 1 else 'estado'
         if sub == 'banco':
             seg = int(pos[2]) if len(pos) > 2 else 20
@@ -341,6 +348,27 @@ def main():
             datos, espera = bytes([4, min(periodo, 255), min(minutos, 120)]), 2
         elif sub == 'para':
             datos, espera = bytes([3]), 1
+        elif sub == 'bt':
+            que = pos[2] if len(pos) > 2 else 'buscar'
+            if que == 'buscar':
+                datos, espera = bytes([5]), 13
+            elif que == 'conecta':
+                mac = bytes(int(x, 16) for x in pos[3].split(':'))
+                if len(mac) != 6:
+                    sys.exit('uso: audio bt conecta AA:BB:CC:DD:EE:FF')
+                datos, espera = bytes([6]) + mac, 8
+            elif que == 'olvida':
+                datos, espera = bytes([7]), 2
+            else:
+                sys.exit('uso: audio bt buscar|conecta MAC|olvida')
+        elif sub == 'ptt':
+            datos, espera = bytes([8]), 1.5
+        elif sub == 'wifi':
+            datos = bytes([10]) + (bytes([int(pos[2])]) if len(pos) > 2 else b'')
+            espera = 2
+        elif sub == 'boton':
+            datos = bytes([9]) + (bytes([int(pos[2])]) if len(pos) > 2 else b'')
+            espera = 1.5
         else:
             datos, espera = bytes([0]), 1.5
         n.manda(CMD_AUDIO, datos)
