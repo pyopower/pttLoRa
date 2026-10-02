@@ -30,7 +30,18 @@ static char nombre_par[24] = "";
 /* Lo que la pila Bluetooth descubre en SUS callbacks y hay que hacer en loop():
    escribir en la NVS desde la pila Bluetooth es buscarse problemas (con el SPP
    rompía la sesión en curso). */
-static volatile bool guardar_par = false, guardar_nombre = false;
+static volatile bool guardar_par = false, guardar_nombre = false, guardar_propio = false;
+
+/* ¿El micro trae PTT PROPIO? Se aprende solo: el primer AT+BLDN lo delata
+   (ver `boton_rellamada`) y queda en la NVS con el micro. Mientras no lo trae,
+   el volumen hace de PTT (el truco del JBL); en cuanto lo trae, el volumen
+   vuelve a ser volumen —con el Abbree, sus +/− abrirían el canal—. */
+static volatile bool ptt_propio = false;
+/* Dónde está el botón FÍSICO según los BLDN contados: abajo/arriba. No es lo
+   mismo que «se está emitiendo»: si el nodo corta por TOT con el PTT aún
+   pulsado, el BLDN siguiente es el de SOLTAR y no debe volver a abrir. */
+static volatile bool bldn_abajo = false;
+static volatile uint32_t t_bldn = 0;
 static volatile uint32_t reabrir_en = 0;
 
 /* Volumen del altavoz que se le impone al micro tras cada pulsación: alto para
@@ -202,10 +213,35 @@ static const char *EST_AUD[] = { "cerrado", "abriendo", "abierto (CVSD 8 kHz)", 
 static void boton_volumen(int v)
 {
     static int antes = -1;
+    if (ptt_propio) { antes = -1; return; }   // volumen de verdad: que lo lleve el micro
     if (antes >= 0 && v < antes) ptt_pulsa(PTT_O_BT, true);
     else if (antes >= 0 && v > antes) ptt_pulsa(PTT_O_BT, false);
     if (v != VOLUMEN) esp_bt_hf_volume_control(par, ESP_HF_VOLUME_CONTROL_TARGET_SPK, VOLUMEN);
     antes = VOLUMEN;
+}
+
+/* AT+BLDN («rellamada»). Medido con el Abbree (KST_vHMIC010, 2-oct-2026): sin
+   A2DP/AVRCP, que es como lo ve esta placa, el PTT manda un AT+BLDN AL PULSAR
+   y otro AL SOLTAR (corta: 0,26 s entre los dos; 36 s mantenido: el segundo
+   llega al soltar, no por tiempo). Con un móvil el mismo PTT va por AVRCP
+   (FF/REWIND) y lo que manda BLDN es el botón P1: si P1 también lo manda aquí,
+   este conmutador lo tomará como PTT — se verá en el banco.
+   Es un conmutador: se lleva la cuenta del botón (`bldn_abajo`) y no del
+   estado de la emisión, para que un corte del nodo no lo desincronice. */
+static void boton_rellamada()
+{
+    uint32_t ahora = millis();
+    if (t_bldn && ahora - t_bldn < 120) return;   // rebote: un flanco, un BLDN
+    t_bldn = ahora;
+    if (!ptt_propio) {
+        ptt_propio = true;
+        guardar_propio = true;
+        audio_dice("micro: trae PTT propio (AT+BLDN); el volumen deja de ser PTT");
+    }
+    bldn_abajo = !bldn_abajo;
+    audio_dice("micro: PTT %s (AT+BLDN)", bldn_abajo ? "abajo" : "arriba");
+    if (bldn_abajo) ptt_pulsa(PTT_O_BT, true);
+    else if (ptt_origen() == PTT_O_BT) ptt_pulsa(PTT_O_BT, false);
 }
 
 /* Una orden AT que no es del estándar. Si parece de PTT, se obedece. */
@@ -245,6 +281,7 @@ static void manos_libres(esp_hf_cb_event_t ev, esp_hf_cb_param_t *p)
             /* Se fue el micro con el PTT abierto: se cierra, o seguiría
                transmitiendo silencio hasta el TOT. */
             if (ptt_origen() == PTT_O_BT) ptt_suelta("se fue el micro");
+            bldn_abajo = false;            // al volver, el botón estará arriba
             audio_abierto = false;
         }
         break;
@@ -278,8 +315,13 @@ static void manos_libres(esp_hf_cb_event_t ev, esp_hf_cb_param_t *p)
         esp_bt_hf_cmee_response(p->chup_rep.remote_addr, ESP_HF_AT_RESPONSE_CODE_OK, ESP_HF_CME_AG_FAILURE);
         break;
     case ESP_HF_DIAL_EVT:
-        audio_dice("micro: boton marcar (%s)", p->out_call.num_or_loc ? p->out_call.num_or_loc : "rellamada");
         esp_bt_hf_cmee_response(p->out_call.remote_addr, ESP_HF_AT_RESPONSE_CODE_OK, ESP_HF_CME_AG_FAILURE);
+        // ATD<num> trae número; AT+BLDN llega sin él (num_or_loc = NULL, y
+        // `type` sin rellenar: no fiarse de él).
+        if (p->out_call.num_or_loc)
+            audio_dice("micro: boton marcar (%s)", p->out_call.num_or_loc);
+        else
+            boton_rellamada();
         break;
     case ESP_HF_VOLUME_CONTROL_EVT:
         if (p->volume_control.type == ESP_HF_VOLUME_TYPE_SPK)
@@ -376,6 +418,7 @@ bool hfp_arranca()
     prefs.begin("hfp", false);
     hay_par = prefs.getBytes("par", par, 6) == 6;
     prefs.getString("nom", nombre_par, sizeof nombre_par);
+    ptt_propio = prefs.getBool("pttp", false);
 
     heap_antes = ESP.getFreeHeap();
     esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
@@ -429,6 +472,7 @@ void hfp_atiende()
     if (!pila_ok) return;
     if (guardar_par) { guardar_par = false; prefs.putBytes("par", par, 6); }
     if (guardar_nombre) { guardar_nombre = false; prefs.putString("nom", nombre_par); }
+    if (guardar_propio) { guardar_propio = false; prefs.putBool("pttp", ptt_propio); }
     /* Si el micro no está (apagado, fuera de alcance), se insiste cada 15 s:
        encenderlo tiene que bastar para que el transceptor lo coja. */
     static uint32_t t_reintento = 0;
@@ -459,6 +503,9 @@ bool hfp_conecta(const uint8_t mac[6])
     nombre_par[0] = 0;
     guardar_par = true;
     guardar_nombre = true;
+    ptt_propio = false;            // micro nuevo: se vuelve a aprender
+    bldn_abajo = false;
+    guardar_propio = true;
     char m[18];
     mac_txt(par, m);
     audio_dice("micro: conectando con %s", m);
@@ -473,6 +520,9 @@ void hfp_olvida()
     nombre_par[0] = 0;
     prefs.remove("par");
     prefs.remove("nom");
+    prefs.remove("pttp");
+    ptt_propio = false;
+    bldn_abajo = false;
     audio_dice("micro: olvidado");
     audio_despierta();
 }
@@ -482,9 +532,10 @@ void hfp_estado(char *s, size_t cap)
     char m[18] = "ninguno";
     if (hay_par) mac_txt(par, m);
     snprintf(s, cap,
-             "micro: %s %s slc=%s audio=%s pila=%uB rx=%luB vacios=%lu/%lu tirados=%lu "
+             "micro: %s %s slc=%s audio=%s ptt=%s pila=%uB rx=%luB vacios=%lu/%lu tirados=%lu "
              "tx=%luB huecos=%lu agc=x%.1f rms=%lu pico=%lu",
              m, nombre_par[0] ? nombre_par : "-", slc ? "si" : "no", audio_abierto ? "si" : "no",
+             ptt_propio ? (bldn_abajo ? "propio(abajo)" : "propio") : "volumen",
              (unsigned)heap_pila, (unsigned long)bytes_mic, (unsigned long)mic_vacios,
              (unsigned long)mic_bloques, (unsigned long)mic_tirados, (unsigned long)bytes_alt,
              (unsigned long)huecos_alt, g_mic, (unsigned long)rms_mic, (unsigned long)pico_mic);

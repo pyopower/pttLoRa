@@ -102,6 +102,28 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
   micro Abbree (hecho para POC) debería traer un PTT propio, que probablemente
   llega como una orden AT no estándar (`ESP_HF_UNAT_RESPONSE_EVT`). El banco ya
   registra todas las que recibe.
+- **El Abbree medido (2-oct-2026, sale como `KST_vHMIC010`)**, con btmon desde una
+  Raspberry y luego en Android. Ofrece HFP, A2DP y AVRCP. Lo que manda depende de
+  con qué perfiles se le conecte:
+  - **Solo HFP**, como lo ve esta placa: el PTT manda un **`AT+BLDN` al pulsar y
+    otro al soltar** (0,26 s entre los dos en una pulsación corta; con 36 s
+    mantenido, el segundo llega al soltar). No hay AT propia de PTT.
+  - **Con A2DP + AVRCP** (un móvil): el PTT pasa a teclas AVRCP, **FAST FORWARD al
+    pulsar** (siempre la misma ráfaga: un toque y luego medio segundo mantenido) y
+    **REWIND al soltar**, también con el audio de llamada abierto. Ahí `AT+BLDN` lo
+    manda el botón **P1** (en Android, rellama al último número).
+  - **+ / −** son volumen (`+VGS`).
+  El firmware lo aprende solo: el primer `AT+BLDN` marca el micro como «PTT
+  propio» (queda en la NVS con él), cada `AT+BLDN` conmuta el PTT, y desde ese
+  momento el volumen deja de hacer de PTT. La cuenta es la del botón, no la de
+  la emisión: si el nodo corta por TOT con el PTT pulsado, el `AT+BLDN` de soltar
+  no vuelve a abrir. `nodo.py audio` lo enseña en `ptt=volumen|propio|propio(abajo)`.
+  **Sin probar todavía en la placa**: falta ver si P1 también manda `AT+BLDN` con
+  solo HFP (entonces abriría el PTT).
+- **Vigilante de tareas**: `loop()` no suelta nunca la CPU 1 y ESP-IDF, por
+  defecto, vigila la tarea de reposo de esa CPU. Reinició nodoCASA en reposo a los
+  276 s («reset=wdt-tarea»). Se apaga como en Arduino a secas
+  (`CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n` en `sdkconfig.defaults`).
 
 ## Siguiente (por orden)
 
@@ -123,8 +145,9 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
    `pantalla_modo`) en vez de que no arrancara.
 2. Medir el heap mínimo hablando y escuchando con el micro enganchado. Si aprieta,
    recortar la cola de recepción o los modos de Codec2 que se escuchan.
-3. El PTT del Abbree, cuando llegue: ver qué manda (las AT desconocidas salen en el
-   registro).
+3. ~~El PTT del Abbree: ver qué manda~~ (medido, ver arriba). Falta **probarlo en
+   la placa**: que enganche (nodoCASA no tiene antena de Bluetooth y desde la
+   habitación de al lado no llega), y comprobar el PTT por `AT+BLDN` y qué hace P1.
 4. Avisos hablados (prompts de Piper en Codec2 guardados en flash) y teclas
    auxiliares.
 5. Flasher web con un cuestionario mínimo (indicativo, potencia, canal) por WebSerial.
