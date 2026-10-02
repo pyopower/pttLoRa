@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import android.view.KeyEvent
 
 /**
  * Servicio en primer plano: mantiene el enlace con el nodo, el audio y el PTT.
@@ -509,6 +510,7 @@ class NodoService : Service() {
         instancia = this
         prefs = Prefs(this)
         arrancaNotificacion()
+        botoneraBt(true)
         if (prefs.posActiva) posicion(true)
         /* UN SOLO HILO para las dos cosas que mantienen el enlace en pie:
            el latido y la reconexion. Las dos son "cada pocos segundos, mira
@@ -791,6 +793,7 @@ class NodoService : Service() {
     }
 
     override fun onDestroy() {
+        botoneraBt(false)
         paraGps()
         sueltaPtt()
         nodoDatos?.desconecta()
@@ -1373,6 +1376,97 @@ class NodoService : Service() {
      *  comporte distinto, que es lo que pasó en la app PTT. */
     fun pulsacion(abajo: Boolean) {
         if (abajo) tomaPtt() else sueltaPtt()
+    }
+
+    /* PTT DE LOS MICRO-ALTAVOCES BLUETOOTH (Abbree / KST_vHMIC010, 2-oct).
+       Medido con btmon: con A2DP+AVRCP conectados —lo normal con un movil— el
+       PTT NO manda nada por HFP, manda teclas AVRCP: FAST FORWARD al pulsar
+       (siempre la misma rafaga: un toque y luego mantenido medio segundo) y
+       REWIND al soltar, tambien con el audio de llamada (SCO) abierto. Flancos
+       separados, asi que no hay estado que se pueda desincronizar.
+       Esas teclas no llegan a la actividad: Android se las da a la sesion
+       multimedia que tenga, y sin ninguna se tiran. De ahi esta sesion, que
+       vive con el servicio para que el PTT valga con la pantalla apagada.
+       Solo se quedan FF y REWIND; lo demas sigue su camino. */
+    private var botonera: Any? = null   // MediaSession; Any por el minSdk 19
+
+    /* Tener la sesion no basta (probado en el OnePlus, Android 16): Android le
+       da los botones a la app que reprodujo audio la ULTIMA, y sin ninguna los
+       tira ("Media button session is null"). Un tercio de segundo de silencio
+       como musica nos pone los primeros. Se repite al volver a la pantalla,
+       por si entretanto otra app de audio se los ha llevado. */
+    fun reclamaBotones() {
+        if (Build.VERSION.SDK_INT < 23 || botonera == null) return   // AudioTrack.Builder
+        Thread {
+            try {
+                val sr = 8000
+                val n = sr / 3
+                val at = android.media.AudioTrack.Builder()
+                    .setAudioAttributes(android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                    .setAudioFormat(android.media.AudioFormat.Builder()
+                        .setSampleRate(sr)
+                        .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                        .build())
+                    .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(n * 2)
+                    .build()
+                at.write(ShortArray(n), 0, n)
+                at.play()
+                Thread.sleep(500)
+                at.stop(); at.release()
+            } catch (e: Exception) {
+                Log.w("ptt", "no se pudo reclamar los botones multimedia", e)
+            }
+        }.start()
+    }
+
+    private fun botoneraBt(on: Boolean) {
+        if (Build.VERSION.SDK_INT < 21) return
+        if (!on) {
+            (botonera as? android.media.session.MediaSession)?.release()
+            botonera = null
+            return
+        }
+        try {
+            val ms = android.media.session.MediaSession(this, "pttlora-ptt")
+            ms.setCallback(object : android.media.session.MediaSession.Callback() {
+                override fun onMediaButtonEvent(i: Intent): Boolean {
+                    @Suppress("DEPRECATION")
+                    val e = i.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
+                        ?: return super.onMediaButtonEvent(i)
+                    val pulsa = when (e.keyCode) {
+                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> true
+                        KeyEvent.KEYCODE_MEDIA_REWIND -> false
+                        else -> return super.onMediaButtonEvent(i)
+                    }
+                    // La rafaga del FF trae dos DOWN y autorrepeticion: tomaPtt
+                    // ya ignora lo que llegue transmitiendo, y los UP no cuentan.
+                    if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) {
+                        Log.i("ptt", "PTT Bluetooth: " + if (pulsa) "pulsa" else "suelta")
+                        pulsacion(pulsa)
+                    }
+                    return true
+                }
+            })
+            @Suppress("DEPRECATION")
+            ms.setFlags(android.media.session.MediaSession.FLAG_HANDLES_MEDIA_BUTTONS)
+            // "Reproduciendo": es lo que hace que Android le mande los botones
+            // a esta sesion y no a la ultima app de musica.
+            ms.setPlaybackState(android.media.session.PlaybackState.Builder()
+                .setActions(android.media.session.PlaybackState.ACTION_FAST_FORWARD or
+                            android.media.session.PlaybackState.ACTION_REWIND)
+                .setState(android.media.session.PlaybackState.STATE_PLAYING, 0, 0f)
+                .build())
+            ms.isActive = true
+            botonera = ms
+            reclamaBotones()
+        } catch (e: Exception) {
+            Log.w("ptt", "sin sesion multimedia: el PTT Bluetooth no funcionara", e)
+        }
     }
 
     /** ¿Se puede hablar? Basta con que UNO de los dos caminos esté en pie.
