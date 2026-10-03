@@ -121,11 +121,47 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
   **Sin probar todavía en la placa**: falta ver si P1 también manda `AT+BLDN` con
   solo HFP (entonces abriría el PTT).
 - **Pantalla segun la alimentacion** (3-oct-2026): con corriente externa, siempre
-  encendida; con bateria, solo mientras transmite o recibe (o al pulsar PRG) y
-  5 s de cola. La LoRa32 v2.1 no tiene pin de USB, asi que se deduce de la
-  bateria: sin pila (pin al aire), clavada arriba mas de 2 min, o subiendo 2
-  puntos en 5 min = externa; bajando 2 puntos = pilas. Tarda unos minutos en
-  decidirse al enchufar o desenchufar.
+  encendida y un rayo pequeño tras la pila; con bateria, solo mientras transmite
+  o recibe (o al pulsar PRG) y 5 s de cola. La LoRa32 v2.1 no tiene pin de USB,
+  asi que hay que deducirlo, y **todavía no está resuelto**:
+  - Por el **porcentaje** (versión 1) no vale: por USB con la pila al 60 %, la
+    carga apenas le gana al consumo del Bluetooth y se quedó en 59-60 % una hora
+    entera; la pantalla temporizaba enchufada.
+  - Por la **tensión** (versión 2, la actual: escalón de ±40 mV frente a la media
+    del minuto anterior, y tendencia en 20 min): enchufada acierta, pero al
+    **desenchufar no lo vio** (rayo puesto y pantalla fija a pilas). Con la carga
+    casi igual al consumo, el escalón al quitar el USB es menor de 40 mV.
+  - **Siguiente prueba**: el chip USB-serie se alimenta del USB, así que su TX
+    (GPIO3, el RX del ESP32) debería estar en alto con USB y caído sin él. Leerlo
+    con `gpio_get_level(GPIO_NUM_3)`, guardar en RAM cada 10 s ese nivel y los mV,
+    y volcarlo al registro cuando vuelva el USB para ver qué señal separa de
+    verdad los dos casos. Con un cargador sin datos el chip también se alimenta,
+    así que valdría igual.
+- **Pantalla que no volvía a encenderse** (3-oct-2026): `despierta_pantalla()`
+  ponía `pantalla_on = true` sin mandar nada al panel, y `gestiona_pantalla()`
+  creía que ya estaba encendida. Tras el primer apagado se quedaba a oscuras para
+  siempre. Ahora solo apunta la actividad; encender (reiniciando el SSD1306 con
+  `oled.begin()`, porque un `DISPLAYON` tras `DISPLAYOFF` no la encendía en
+  nodoCASA) lo hace solo `gestiona_pantalla()`. Validado: despierta con TX, RX y
+  balizas y se apaga a los 5 s.
+- **Congelación de las 22:42** (3-oct-2026): el volcado de cuelgue (partición
+  coredump en 0x3f0000, `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`) decía **«stack
+  overflow in task loopTask»**. La pila de `loop()` pasa de 8 a 16 KB
+  (`SET_LOOP_TASK_STACK_SIZE`) y el registro apunta cada nuevo mínimo
+  (`pila loop: minimo N B libres`); en reposo con el micro, ~13,4 KB libres.
+  Guardar el ELF de cada versión flasheada (`pttlora/backup/elf/`): el volcado
+  solo se puede leer con el ELF exacto (`esp_coredump info_corefile -c volcado.bin
+  firmware.elf`), y el de esa versión no se guardó.
+- **Zumbido y enlace roto por claves viejas** (3-oct-2026): tras restaurar una
+  **copia completa de la flash** (con la NVS de otro día) volvieron las claves de
+  emparejamiento antiguas: el micro mandaba paquetes casi todos a cero, A2DP se
+  cerraba con «motivo 1», zumbido en el Abbree y desconexión a los pocos
+  segundos. No era la antena ni nada externo. **Arreglo: olvidar el micro
+  (`audio` 7) y volver a emparejar**; el Abbree se pone solo en emparejamiento al
+  borrarlo de la placa. **Nunca restaurar una copia completa de la flash**; para
+  volver atrás, solo la partición de la aplicación.
+  Desde entonces el diagnóstico (`diag:` cada 5 s, en `audio_bt.cpp`) da 16000 B/s
+  en cada sentido y 0-7 paquetes vacíos de 667 por cada 5 s.
 - **Abbree en la placa (3-oct-2026)**: engancha (HFP, CVSD 8 kHz) y por su
   altavoz se oye lo que llega por LoRa. Pero con el audio abierto **sus botones
   no mandan nada por HFP** (ni PTT, ni P1, ni +/-): el PTT va por AVRCP, que el
@@ -135,6 +171,10 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
   punta: Abbree -> placa -> LoRa -> celda -> reflector -> app, y al reves.
   Ojo al probar con la app: si tiene el MISMO indicativo que la placa, el
   servicio de datos no se la reenvia (anti-eco); usar un sufijo (C31AG-7).
+- **Codificar Codec2 se ha encarecido**: con Bluedroid haciendo SCO + A2DP +
+  AVRCP en el mismo núcleo 0, codificar una trama tarda **33-39 ms de media y
+  41-52 ms en el peor caso**, para tramas de 40 ms (el banco medía 22,5 ms). Va
+  justo o tarde: hay que moverlo (ver «Siguiente»).
 - **Vigilante de tareas**: `loop()` no suelta nunca la CPU 1 y ESP-IDF, por
   defecto, vigila la tarea de reposo de esa CPU. Reinició nodoCASA en reposo a los
   276 s («reset=wdt-tarea»). Se apaga como en Arduino a secas
@@ -143,26 +183,26 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
 ## Siguiente (por orden)
 
 1. ~~Llevar el transceptor al firmware principal~~, ~~separar el PTT de su
-   origen~~ y ~~probarlo con un micro~~: **hecho**. Con un Abbree/KST_vHMIC010
-   emparejado el audio ya pasa en los dos sentidos.
-   **Pendiente de confirmar en placa**: la OLED se queda a oscuras aunque todo
-   lo demás funcione, con batería y con alimentación externa por igual (así
-   que no es brownout). Sospecha sin confirmar: en `setup()` `audio_arranca()`
-   —y su `hfp_arranca()`, que arranca Bluedroid Classic— se llamaba ANTES de
-   `Wire.begin()`/`oled.begin()`, al revés que en `bench/hfp-ag` (que
-   deliberadamente pone la pantalla primero). Si Bluedroid se queda con una
-   interrupción que el bus I2C necesita, `oled.begin()` puede fallar sin
-   avisar: esta integración, a diferencia del banco, no tenía ni un log de si
-   `hay_oled` salió bien. Movido el orden y añadido ese log (`oled: si` / `oled:
-   NO la veo`, por USB). **Falta flashear y comprobar**: si tras esto la
-   pantalla sigue a oscuras pero el log dice `oled: si`, la causa es otra —
-   mirar entonces si `gestiona_pantalla()` la está apagando (modo de pantalla,
-   `pantalla_modo`) en vez de que no arrancara.
+   origen~~, ~~probarlo con un micro~~ y ~~el PTT propio del Abbree~~: **hecho y
+   validado en el aire** (3-oct-2026, PTT por AVRCP). La OLED a oscuras era
+   `despierta_pantalla()` (ver arriba).
+   **Ahora, por orden:**
+   a. **Detectar el USB de verdad** (ver «Pantalla según la alimentación»): medir
+      GPIO3 con y sin USB.
+   b. **Codec2 fuera del núcleo de Bluedroid**: el codificador ya no cabe en 40 ms.
+      Probar la tarea de audio en el núcleo 1 ahora que Bluedroid carga más el 0,
+      o bajar la prioridad/mover lo que no sea SCO.
+   c. **Quitar P1 (`AT+BLDN`) como PTT**: con A2DP+AVRCP el PTT es AVRCP y P1 no
+      debe transmitir (decisión del usuario: «inadmisible P1 como PTT»).
+   d. Decidir qué diagnósticos se quedan (`diag:` cada 5 s, `oled: despertar`,
+      `pila loop`) y quitar el resto. Entender las AT `+IPHONEACCEV=1,1,N`: es la
+      batería del micro (N de 9), se podría enseñar.
+   e. Con batería, la pantalla despierta también con cada baliza de la celda (una
+      por minuto): que solo despierte con voz.
 2. Medir el heap mínimo hablando y escuchando con el micro enganchado. Si aprieta,
    recortar la cola de recepción o los modos de Codec2 que se escuchan.
-3. ~~El PTT del Abbree: ver qué manda~~ (medido, ver arriba). Falta **probarlo en
-   la placa**: que enganche (nodoCASA no tiene antena de Bluetooth y desde la
-   habitación de al lado no llega), y comprobar el PTT por `AT+BLDN` y qué hace P1.
+3. ~~El PTT del Abbree~~: hecho (AVRCP). Con el micro pegado a nodoCASA engancha
+   aunque no tenga antena de Bluetooth.
 4. Avisos hablados (prompts de Piper en Codec2 guardados en flash) y teclas
    auxiliares.
 5. Flasher web con un cuestionario mínimo (indicativo, potencia, canal) por WebSerial.
