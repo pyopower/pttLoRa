@@ -56,6 +56,12 @@ static volatile uint32_t reabrir_en = 0;
    enlace en cuanto el micro esta enganchado. */
 static volatile bool a2dp_ok = false, avrc_ok = false, avrc_abajo = false;
 static volatile uint32_t abrir_a2dp_en = 0;
+/* QUIEN abre A2DP importa (medido el 3-oct): si lo abre la placa tras el SLC,
+   el Abbree lo mantiene; si lo abre EL (al reconectar ya conoce a la placa),
+   lo cierra a los 4 s, se lleva el AVRCP —adios PTT— y el vaiven mete un
+   zumbido en el altavoz. Asi que si llega abierto por el micro, se cierra y se
+   vuelve a abrir desde aqui. */
+static volatile bool a2dp_mio = false, rehacer_a2dp = false;
 
 /* Volumen del altavoz que se le impone al micro tras cada pulsación: alto para
    oír bien y con margen para que el botón siga mandando eventos (en el tope de
@@ -77,6 +83,7 @@ static void mac_txt(const uint8_t *b, char *s)
 static RingbufHandle_t rb_mic = nullptr, rb_alt = nullptr;
 static volatile uint32_t bytes_mic = 0, bytes_alt = 0, huecos_alt = 0;
 static volatile uint32_t mic_bloques = 0, mic_vacios = 0, mic_tirados = 0;
+static volatile uint32_t n_pide = 0, n_listo = 0, n_pide_cero = 0;   // DIAGNOSTICO
 
 static void llega_del_micro(const uint8_t *buf, uint32_t len)
 {
@@ -105,6 +112,10 @@ static uint32_t pide_el_altavoz(uint8_t *buf, uint32_t len)
     }
     if (puesto < len) { huecos_alt++; memset(buf + puesto, 0, len - puesto); }
     bytes_alt += len;
+    n_pide++;
+    bool cero = true;
+    for (uint32_t i = 0; i < len && cero; i++) cero = buf[i] == 0;
+    if (cero) n_pide_cero++;
     return len;
 }
 
@@ -116,7 +127,7 @@ static void empuja_salida(void *)
         if (!audio_abierto || !rb_alt) continue;
         size_t hay = 0;
         vRingbufferGetInfo(rb_alt, nullptr, nullptr, nullptr, nullptr, &hay);
-        if (hay >= 120) esp_hf_outgoing_data_ready();
+        if (hay >= 120) { esp_hf_outgoing_data_ready(); n_listo++; }
     }
 }
 
@@ -302,9 +313,13 @@ static void a2dp(esp_a2d_cb_event_t ev, esp_a2d_cb_param_t *p)
 {
     if (ev == ESP_A2D_CONNECTION_STATE_EVT) {
         a2dp_ok = p->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED;
-        if (p->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED ||
-            p->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED)
-            audio_dice("micro: A2DP %s (solo para el AVRCP)", a2dp_ok ? "enlazado" : "cerrado");
+        if (p->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
+            audio_dice("micro: A2DP enlazado (%s)", a2dp_mio ? "lo abri yo" : "lo abrio el micro");
+            if (!a2dp_mio) rehacer_a2dp = true;      // ver a2dp_mio
+        } else if (p->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
+            audio_dice("micro: A2DP cerrado (motivo %d)", (int)p->conn_stat.disc_rsn);
+            a2dp_mio = false;
+        }
     }
 }
 
@@ -560,6 +575,23 @@ bool hfp_arranca()
 void hfp_atiende()
 {
     if (!pila_ok) return;
+    /* DIAGNOSTICO del zumbido (3-oct-2026): cada 5 s, con audio abierto, el
+       ritmo real de lo que va al altavoz y de lo que llega del micro. CVSD
+       necesita 16.000 B/s en cada sentido. */
+    static uint32_t t_diag = 0, b_alt0 = 0, b_mic0 = 0, pide0 = 0, listo0 = 0, cero0 = 0, hue0 = 0, vac0 = 0, blq0 = 0;
+    if (audio_abierto && millis() - t_diag > 5000) {
+        uint32_t dt = millis() - t_diag; t_diag = millis();
+        size_t cola = 0;
+        if (rb_alt) vRingbufferGetInfo(rb_alt, nullptr, nullptr, nullptr, nullptr, &cola);
+        audio_dice("diag: alt %lu B/s (pide %lu/s, ceros %lu, huecos %lu, listo %lu/s, cola %u B) | mic %lu B/s (vacios %lu/%lu) | heap %u",
+                   (unsigned long)((bytes_alt - b_alt0) * 1000UL / dt), (unsigned long)((n_pide - pide0) * 1000UL / dt),
+                   (unsigned long)(n_pide_cero - cero0), (unsigned long)(huecos_alt - hue0),
+                   (unsigned long)((n_listo - listo0) * 1000UL / dt), (unsigned)cola,
+                   (unsigned long)((bytes_mic - b_mic0) * 1000UL / dt), (unsigned long)(mic_vacios - vac0),
+                   (unsigned long)(mic_bloques - blq0), (unsigned)ESP.getFreeHeap());
+        b_alt0 = bytes_alt; b_mic0 = bytes_mic; pide0 = n_pide; listo0 = n_listo; cero0 = n_pide_cero;
+        hue0 = huecos_alt; vac0 = mic_vacios; blq0 = mic_bloques;
+    }
     if (guardar_par) { guardar_par = false; prefs.putBytes("par", par, 6); }
     if (guardar_nombre) { guardar_nombre = false; prefs.putString("nom", nombre_par); }
     if (guardar_propio) { guardar_propio = false; prefs.putBool("pttp", ptt_propio); }
@@ -572,7 +604,13 @@ void hfp_atiende()
     }
     if (abrir_a2dp_en && (int32_t)(millis() - abrir_a2dp_en) >= 0) {
         abrir_a2dp_en = 0;
-        if (slc && !a2dp_ok && hay_par) esp_a2d_source_connect(par);
+        if (slc && !a2dp_ok && hay_par) { a2dp_mio = true; esp_a2d_source_connect(par); }
+    }
+    if (rehacer_a2dp) {                       // lo abrio el micro: cerrar y reabrir
+        rehacer_a2dp = false;
+        audio_dice("micro: A2DP abierto por el micro, se rehace desde la placa");
+        esp_a2d_source_disconnect(par);
+        abrir_a2dp_en = millis() + 1500;
     }
     /* A2DP SIEMPRE ENLAZADO mientras el micro este: sin el no hay AVRCP (ni
        PTT), y ademas el Abbree mete un ZUMBIDO en su altavoz cuando A2DP esta
@@ -581,6 +619,7 @@ void hfp_atiende()
     static uint32_t t_a2dp = 0;
     if (slc && !a2dp_ok && hay_par && !abrir_a2dp_en && millis() - t_a2dp > 5000) {
         t_a2dp = millis();
+        a2dp_mio = true;
         esp_a2d_source_connect(par);
     }
     if (reabrir_en && (int32_t)(millis() - reabrir_en) >= 0) {

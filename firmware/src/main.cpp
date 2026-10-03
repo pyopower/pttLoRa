@@ -658,6 +658,11 @@ static uint32_t t_ultima_voz = 0;
    abajo sobre por que el jitter NO puede ir sumado a `t_ultima_hola`. */
 static uint32_t hola_espera = HOLA_MS;
 static bool     canal_ocupado = false;
+#ifdef AUDIO_BT
+static bool     alim_externa = true;   // USB/cargador (lo deduce gestiona_pantalla)
+#else
+static bool     alim_externa = false;  // fuera del transceptor no se deduce
+#endif
 static bool     hay_anfitrion = false;
 static uint32_t n_rx = 0, n_tx = 0, n_repetidas = 0, n_dup = 0, n_malas = 0;
 /* Lo que entro por el ENLACE de Internet, aparte de `n_rx`, que desde la v1.39
@@ -1536,8 +1541,14 @@ static uint8_t bateria_pct();
    cambio de estado del canal o el boton. Lo demas la deja dormirse sola. */
 static void despierta_pantalla()
 {
+    /* Solo se apunta la actividad: encender la pantalla de verdad (la orden al
+       panel) lo hace gestiona_pantalla() en la siguiente vuelta. Antes se ponia
+       aqui pantalla_on = true SIN mandar nada al panel, y gestiona_pantalla()
+       veia "ya esta encendida": la pantalla se quedaba apagada para siempre en
+       cuanto se apagaba una vez (encontrado el 3-oct-2026 con el log de
+       diagnostico: dos "apagar" seguidos sin ningun "despertar"). */
     t_actividad = millis();
-    if (!pantalla_on) { pantalla_on = true; redibujar = true; }
+    redibujar = true;
 }
 
 static void gestiona_pantalla()
@@ -1550,26 +1561,65 @@ static void gestiona_pantalla()
     /* Y depende de la ALIMENTACION (peticion del usuario, 3-oct-2026): con
        corriente externa, siempre encendida; con bateria, solo mientras se
        transmite o se recibe (o se pulsa el boton), con 5 s de cola.
-       La LoRa32 v2.1 no tiene pin que diga si hay USB, asi que se deduce:
-         - sin bateria (bateria_pct()==0: el pin flota) = solo USB;
-         - bateria clavada arriba (>=98 %) mas de 2 min = cargada y enchufada;
-         - la carga SUBE 2 puntos o mas en 5 min = cargando por USB, y si BAJA
-           2 puntos, va a pilas. Entre medias se mantiene lo ultimo decidido.
-           Tarda unos minutos en decidirse al enchufar o desenchufar, y recien
-           cargada sin USB se queda encendida de mas un rato: errores baratos.
-       Se mira cada minuto: bateria_pct() muestrea el ADC. */
-    static uint32_t t_mira = 0, t_arriba = 0;
-    static uint8_t hist[6] = {0}, nh = 0, llenas = 0;
-    static bool externa = false;
-    if (!t_mira || millis() - t_mira > 60000UL) {
+       La LoRa32 v2.1 no tiene pin que diga si hay USB, asi que se deduce de la
+       TENSION de la bateria, muestreada cada 10 s en silencio (sin TX ni RX ni
+       en los 3 s siguientes: la caida al transmitir no cuenta):
+         - sin bateria (el pin flota: bateria_pct() dice 0) = solo USB;
+         - ESCALON: al enchufar, el cargador sube la tension de golpe 50-200 mV;
+           al desenchufar, cae otro tanto. Se compara con la media de hace un
+           minuto: +40 mV = enchufada, -40 mV = a pilas. Es lo que decide al
+           momento.
+         - Y para el arranque (sin escalon que ver), la TENDENCIA en 20 min: a
+           pilas, con Bluetooth y el receptor siempre escuchando, la tension
+           baja; enchufada se queda o sube. Al arrancar se supone enchufada
+           (equivocarse asi solo gasta pantalla unos minutos).
+       ⚠️ El porcentaje no vale para esto: en nodoCASA (3-oct-2026), por USB
+       con la bateria al 60 %, la carga apenas le gana al consumo del Bluetooth
+       y se quedo en 59-60 % una hora entera; la regla vieja ("sube 2 puntos en
+       5 min") no se cumplia nunca y la pantalla temporizaba enchufada. */
+    static uint32_t t_mira = 0, t_ruido = 0, t_tend = 0;
+    static uint32_t mv_min[6] = {0};                 // media de cada minuto
+    static uint32_t acu = 0, mv_tend = 0;
+    static uint8_t  n_acu = 0, i_min = 0, n_min = 0;
+    static bool sin_bat = false;
+    bool &externa = alim_externa;
+    if (transmitiendo || canal_ocupado) t_ruido = millis();
+    if (millis() - t_mira > 10000UL && millis() - t_ruido > 3000UL) {
         t_mira = millis();
-        uint8_t pct = bateria_pct();
-        hist[nh] = pct; nh = (nh + 1) % 6; if (llenas < 6) llenas++;
-        int antes = llenas >= 6 ? hist[nh] : -1;          // hace 5 min
-        if (pct >= 98) { if (!t_arriba) t_arriba = millis(); } else t_arriba = 0;
-        if (pct == 0 || (t_arriba && millis() - t_arriba > 120000UL)) externa = true;
-        else if (antes >= 0 && pct >= antes + 2) externa = true;
-        else if (antes >= 0 && pct + 2 <= antes) externa = false;
+        uint32_t suma = 0;
+        for (int i = 0; i < 16; i++) { suma += analogRead(P_BAT); delayMicroseconds(100); }
+        uint32_t mv = (uint32_t)((suma / 16) * 2 * 3300.0 / 4095.0);
+        bool antes = externa;
+        const char *por = "";
+        int32_t salto = 0;
+        if (n_min) {                                  // escalon frente a hace 1 min
+            uint32_t ref = mv_min[(i_min + 5) % 6];
+            salto = (int32_t)mv - (int32_t)ref;
+            if (salto >= 40)  { externa = true;  por = "escalon"; }
+            if (salto <= -40) { externa = false; por = "escalon"; }
+        }
+        acu += mv;
+        if (++n_acu >= 6) {                           // un minuto de muestras
+            mv_min[i_min] = acu / n_acu; i_min = (i_min + 1) % 6;
+            if (n_min < 6) n_min++;
+            acu = 0; n_acu = 0;
+            sin_bat = (bateria_pct() == 0);           // una vez por minuto: ver bateria_pct()
+        }
+        if (sin_bat) { externa = true; por = "sin bateria"; }
+        if (!t_tend) { t_tend = millis(); mv_tend = mv; }
+        else if (millis() - t_tend > 20UL * 60000UL) {
+            if (!*por) {
+                if ((int32_t)mv - (int32_t)mv_tend <= -15) { externa = false; por = "tendencia"; }
+                else if ((int32_t)mv - (int32_t)mv_tend >= 0) { externa = true; por = "tendencia"; }
+            }
+            t_tend = millis(); mv_tend = mv;
+        }
+        if (externa != antes) {
+            char m[80];
+            snprintf(m, sizeof m, "alimentacion: %s (%s, %lu mV, %+ld mV)",
+                     externa ? "externa" : "bateria", por, (unsigned long)mv, (long)salto);
+            log_txt(m);
+        }
     }
     const uint32_t cola = externa ? 0xFFFFFFFFUL : 5000UL;
 #else
@@ -1581,10 +1631,23 @@ static void gestiona_pantalla()
     if (pantalla_modo == PANTALLA_OFF) debe = false;
     if (debe == pantalla_on) return;
     pantalla_on = debe;
-    // El SSD1306 tiene una orden para apagar el panel sin perder la imagen ni
-    // reinicializarlo: consume practicamente cero y despierta al instante.
-    oled.ssd1306_command(pantalla_on ? SSD1306_DISPLAYON : SSD1306_DISPLAYOFF);
-    if (pantalla_on) redibujar = true;
+    /* Para apagar, la orden del SSD1306 que apaga el panel sin perder nada.
+       Para ENCENDER, en cambio, se reinicializa entera con la secuencia del
+       arranque: en nodoCASA (3-oct-2026) un DISPLAYON tras un DISPLAYOFF NO la
+       volvia a encender —ni a mano con el modo "fija"—, y arrancando ya
+       encendida si funcionaba. Con el apagado a los 60 s casi no se notaba; con
+       el de 5 s a pilas, la pantalla parecia muerta. Sin tocar el bus I2C. */
+    if (pantalla_on) {
+        Wire.beginTransmission(0x3C);                 // DIAGNOSTICO: contesta?
+        uint8_t err = Wire.endTransmission();
+        bool ok = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C, false, false);
+        char m[64]; snprintf(m, sizeof m, "oled: despertar I2C=%u begin=%d", err, ok);
+        log_txt(m);
+        redibujar = true;
+    } else {
+        oled.ssd1306_command(SSD1306_DISPLAYOFF);
+        log_txt("oled: apagar");
+    }
 }
 
 #ifdef AUDIO_BT
@@ -1723,6 +1786,13 @@ static int pinta_alimentacion(uint8_t pct)
     if (lleno) oled.fillRect(1, 2, lleno, 5, SSD1306_WHITE);
     /* Sin porcentaje, a proposito: el relleno basta para saber si queda, y
        el sitio es para el indicativo (decision del usuario, 1-oct-2026). */
+    if (alim_externa) {
+        /* Enchufada (cargando o ya llena): rayo pequeño, 5x8, tras la pila. */
+        oled.drawLine(20, 0, 16, 4, SSD1306_WHITE);
+        oled.drawLine(16, 4, 20, 4, SSD1306_WHITE);
+        oled.drawLine(20, 4, 16, 8, SSD1306_WHITE);
+        return 24;
+    }
     return 19;
 }
 
@@ -4403,6 +4473,13 @@ static void atiende_wifi()
 }
 
 // ------------------------------------------------------------------ setup --
+/* LA PILA DE loop(). La de Arduino trae 8 KB y el transceptor se quedo corto:
+   el 3-oct-2026 a las 22:42 nodoCASA se congelo y el volcado decia "stack
+   overflow in task loopTask" (pantalla, LoRa, enlace y consola viven todos en
+   loop()). Con 16 KB sobra, y loop() avisa en el registro si alguna vez quedan
+   menos de 2 KB libres (y apunta cada nuevo minimo). */
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
 void setup()
 {
     /* 1 kB de buffer de salida: la linea de estado no cabe en los 256 de serie
@@ -4639,6 +4716,20 @@ void loop()
     apaga_bt_si_toca();
     if (digitalRead(P_BOTON) == LOW) despierta_pantalla();
     gestiona_pantalla();
+    {
+        static uint32_t t_pila = 0, peor = 0xFFFFFFFF;
+        if (millis() - t_pila > 10000UL) {
+            t_pila = millis();
+            uint32_t libre = uxTaskGetStackHighWaterMark(NULL);
+            if (libre < peor) {
+                peor = libre;
+                char m[56];
+                snprintf(m, sizeof m, "pila loop: minimo %lu B libres%s", (unsigned long)libre,
+                         libre < 2048 ? " (!)" : "");
+                log_txt(m);
+            }
+        }
+    }
 
     // Refresco de pantalla: por evento, y en todo caso una vez por segundo para
     // que el estado del canal y la bateria no se queden congelados.
