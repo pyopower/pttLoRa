@@ -54,3 +54,13 @@ CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
 # El Abbree manda su PTT por AVRCP (FF/REWIND) y solo abre AVRCP tras A2DP: la
 # placa se registra como fuente A2DP sin llegar a mandar musica nunca.
 CONFIG_BT_A2DP_ENABLE=y
+# --- Depurar cuelgues (3-oct-2026) ---
+# Con la tarea de reposo de la CPU 1 sin vigilar, un cuelgue de verdad dejaba la
+# placa congelada sin rastro. Ahora se vigila el propio loop() (enableLoopWDT en
+# setup): si una vuelta pasa de 10 s hay panico, y el panico deja un volcado en
+# la particion `coredump` (ya existia y no se usaba) que se lee por USB.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y

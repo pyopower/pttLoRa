@@ -574,6 +574,15 @@ void hfp_atiende()
         abrir_a2dp_en = 0;
         if (slc && !a2dp_ok && hay_par) esp_a2d_source_connect(par);
     }
+    /* A2DP SIEMPRE ENLAZADO mientras el micro este: sin el no hay AVRCP (ni
+       PTT), y ademas el Abbree mete un ZUMBIDO en su altavoz cuando A2DP esta
+       cerrado (oido el 3-oct: con A2DP enlazado desaparecia y volvia en cuanto
+       el micro lo cerraba). Si lo cierra, se reabre a los 5 s. */
+    static uint32_t t_a2dp = 0;
+    if (slc && !a2dp_ok && hay_par && !abrir_a2dp_en && millis() - t_a2dp > 5000) {
+        t_a2dp = millis();
+        esp_a2d_source_connect(par);
+    }
     if (reabrir_en && (int32_t)(millis() - reabrir_en) >= 0) {
         reabrir_en = 0;
         if (slc && !audio_abierto && hay_par) esp_bt_hf_connect_audio(par);

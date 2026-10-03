@@ -35,6 +35,7 @@
 //                             0xe000 boot_app0.bin 0x10000 firmware.bin
 
 #include <Arduino.h>
+#include "esp_core_dump.h"
 #include <RadioLib.h>
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
@@ -4466,6 +4467,21 @@ void setup()
         oled.display();
     }
     log_txt(hay_oled ? "oled: si" : "oled: NO la veo");
+#ifdef AUDIO_BT
+    /* CUELGUES: se vigila el propio loop() (si una vuelta pasa de 10 s, panico)
+       y el panico deja un volcado en la particion `coredump`. Al arrancar se
+       avisa si hay uno pendiente: se lee con esptool + espcoredump.py y el
+       firmware.elf de esta misma compilacion. */
+    enableLoopWDT();
+    if (esp_core_dump_image_check() == ESP_OK) {
+        size_t dir = 0, tam = 0;
+        esp_core_dump_image_get(&dir, &tam);
+        char m[96];
+        snprintf(m, sizeof m, "coredump: HAY un volcado de un cuelgue anterior (%u B en 0x%x)",
+                 (unsigned)tam, (unsigned)dir);
+        log_txt(m);
+    }
+#endif
 
 #ifdef AUDIO_LOCAL
     tubos[T_LOCAL].clase = TUBO_LOCAL;
