@@ -11,7 +11,7 @@ todavía en piezas sueltas. Se publica para poder trabajar sobre ella.
 
 | Dónde | Qué es | Estado |
 |---|---|---|
-| `firmware/` (`pio run -e transceptor`) | **El transceptor dentro del firmware principal**: malla, balizas, NVS y órdenes por USB, más el micro Bluetooth (`src/audio_bt.*`) como fuente y sumidero de `audio_local`, y el PTT separado de su origen (`src/ptt.*`) | 🟡 Compila y arranca en la placa, y el banco mide bien. **Sin probar todavía con micro ni en el aire** |
+| `firmware/` (`pio run -e transceptor`) | **El transceptor dentro del firmware principal**: malla, balizas, NVS y órdenes por USB, más el micro Bluetooth (`src/audio_bt.*`) como fuente y sumidero de `audio_local`, y el PTT separado de su origen (`src/ptt.*`) | 🟡 **Probado con un micro Abbree/KST_vHMIC010**: el audio ya pasa en los dos sentidos. Pendiente: la OLED se queda a oscuras (ver más abajo) |
 | `bench/hfp-ag/` (`pio run -e transceptor`) | **Transceptor v0**: firmware aparte, HFP-AG + Codec2 1200 + LoRa + pantalla | ✅ Probado en el aire en los dos sentidos (micro JBL GO ↔ celda ↔ reflector ↔ app), sin WiFi |
 | `bench/hfp-ag/` (`pio run -e hfpag`) | Lo mismo pero la voz va por WiFi al reflector | Funciona, pero el WiFi y el audio Bluetooth se pisan (se pierde ~10 % del micro): queda como demostración |
 | `firmware/src/audio_local.*` (`pio run -e lora32-audio`) | Codec2 DENTRO del firmware principal, como un tubo más (`T_LOCAL`), con el mismo arbitraje de PTT, TOT y eco que la app | ✅ Baliza hablada codificada en la placa y oída en la app |
@@ -105,9 +105,22 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
 
 ## Siguiente (por orden)
 
-1. ~~Llevar el transceptor al firmware principal~~ y ~~separar el PTT de su
-   origen~~: **hecho** (ver arriba). Falta **probarlo con un micro**: emparejar el JBL,
-   oír por el altavoz lo que llega de la red y, con permiso, hablar por el aire.
+1. ~~Llevar el transceptor al firmware principal~~, ~~separar el PTT de su
+   origen~~ y ~~probarlo con un micro~~: **hecho**. Con un Abbree/KST_vHMIC010
+   emparejado el audio ya pasa en los dos sentidos.
+   **Pendiente de confirmar en placa**: la OLED se queda a oscuras aunque todo
+   lo demás funcione, con batería y con alimentación externa por igual (así
+   que no es brownout). Sospecha sin confirmar: en `setup()` `audio_arranca()`
+   —y su `hfp_arranca()`, que arranca Bluedroid Classic— se llamaba ANTES de
+   `Wire.begin()`/`oled.begin()`, al revés que en `bench/hfp-ag` (que
+   deliberadamente pone la pantalla primero). Si Bluedroid se queda con una
+   interrupción que el bus I2C necesita, `oled.begin()` puede fallar sin
+   avisar: esta integración, a diferencia del banco, no tenía ni un log de si
+   `hay_oled` salió bien. Movido el orden y añadido ese log (`oled: si` / `oled:
+   NO la veo`, por USB). **Falta flashear y comprobar**: si tras esto la
+   pantalla sigue a oscuras pero el log dice `oled: si`, la causa es otra —
+   mirar entonces si `gestiona_pantalla()` la está apagando (modo de pantalla,
+   `pantalla_modo`) en vez de que no arrancara.
 2. Medir el heap mínimo hablando y escuchando con el micro enganchado. Si aprieta,
    recortar la cola de recepción o los modos de Codec2 que se escuchan.
 3. El PTT del Abbree, cuando llegue: ver qué manda (las AT desconocidas salen en el

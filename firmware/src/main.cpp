@@ -4392,20 +4392,23 @@ void setup()
     tubos[T_USB].cap = KISS_MAX;
     tubos[T_BT].buf = buf_bt;
     tubos[T_BT].cap = KISS_MAX;
-#ifdef AUDIO_LOCAL
-    tubos[T_LOCAL].clase = TUBO_LOCAL;
-    tubos[T_LOCAL].autorizado = true;
-    audio_log = log_txt;
-    audio_arranca(P_BOTON, AUDIO_PIN_PTT);
-#endif
 
-    pinMode(P_LED, OUTPUT);
-    digitalWrite(P_LED, LOW);
-    pinMode(P_BOTON, INPUT_PULLUP);
-    analogReadResolution(12);
-    carga_ajustes();
-    randomSeed(esp_random());
-
+    // LA PANTALLA, LO PRIMERO (igual que en bench/hfp-ag, y por el mismo
+    // motivo): si algo de lo que viene detras se atasca —el controlador
+    // Bluetooth Classic de audio_arranca(), la radio— al menos queda encendida
+    // y se ve por donde iba.
+    //
+    // SOSPECHA sin confirmar todavia (pantalla a oscuras en el transceptor con
+    // el micro Bluetooth emparejado, en banco externo igual que con bateria):
+    // aqui el orden estaba AL REVES de bench/hfp-ag, con audio_arranca() (y su
+    // hfp_arranca(), que arranca Bluedroid Classic) ANTES de Wire.begin().
+    // Bluedroid pide varias interrupciones al controlador; si se queda con la
+    // que Wire necesita para el bus I2C antes de que Wire la reserve,
+    // oled.begin() puede fallar sin mas (y esta integracion, a diferencia del
+    // banco, no tenia ni un log de si `hay_oled` salio bien). El log de abajo
+    // es justo para confirmarlo: si tras este cambio sigue sin verse NADA en
+    // la pantalla pero el log dice "oled: si", la causa es otra.
+    //
     // NO TOCAR GPIO16 EN ESTA PLACA. El pins_arduino.h del variant lo declara
     // como OLED_RST, pero en la T3 v1.6.1 real manejarlo cuelga el sistema:
     // arranque en bucle con TG1WDT_SYS_RESET, siempre en ese punto exacto.
@@ -4436,6 +4439,21 @@ void setup()
         oled.clearDisplay();
         oled.display();
     }
+    log_txt(hay_oled ? "oled: si" : "oled: NO la veo");
+
+#ifdef AUDIO_LOCAL
+    tubos[T_LOCAL].clase = TUBO_LOCAL;
+    tubos[T_LOCAL].autorizado = true;
+    audio_log = log_txt;
+    audio_arranca(P_BOTON, AUDIO_PIN_PTT);
+#endif
+
+    pinMode(P_LED, OUTPUT);
+    digitalWrite(P_LED, LOW);
+    pinMode(P_BOTON, INPUT_PULLUP);
+    analogReadResolution(12);
+    carga_ajustes();
+    randomSeed(esp_random());
 
     SPI.begin(P_SCK, P_MISO, P_MOSI, P_CS);
     int st = radio.begin(frecuencia, ancho, sf, cr, SYNC_WORD, potencia, 8);
