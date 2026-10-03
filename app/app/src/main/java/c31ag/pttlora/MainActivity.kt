@@ -175,6 +175,7 @@ class MainActivity : Activity(), NodoService.Observador {
 
     override fun onResume() {
         super.onResume()
+        NodoService.instancia?.reclamaBotones()   // PTT del micro Bluetooth
         ui.removeCallbacks(vigilante)
         ui.post(vigilante)
         arrancaMetro()          // si la aguja se quedó a medias, que termine

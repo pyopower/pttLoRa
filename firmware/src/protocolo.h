@@ -370,6 +370,11 @@ enum : uint8_t {
      * firmware sin secreto sencillamente no contesta, y eso se ve en el estado
      * como `secreto=no`. */
     CMD_RETO   = 0x19,   // [32 caracteres hex]
+    /* Solo en firmwares con AUDIO_LOCAL (la placa codifica ella). Ver
+       audio_local.h. [sub]: 0 estado, 1 prueba [veces] (habla la voz grabada
+       POR EL AIRE), 2 banco [segundos][nucleo] (mide sin emitir), 3 parar,
+       4 baliza [periodo_s][minutos] (habla sola cada periodo; 0 = apagar). */
+    CMD_AUDIO  = 0x1A,
 };
 
 /* Origen de la posicion, y CADA UNO SE EMITE DE UNA MANERA (v1.36).

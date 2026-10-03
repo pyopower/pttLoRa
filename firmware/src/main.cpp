@@ -44,8 +44,21 @@
 #include <ArduinoOTA.h>
 #include <WiFiUdp.h>
 #include <Update.h>
+#ifdef AUDIO_LOCAL
+#include "audio_local.h"
+#include "ptt.h"
+#endif
+#ifdef AUDIO_BT
+#include "audio_bt.h"
+#endif
 #include <esp_system.h>
+/* -DSIN_BLE: el transceptor lleva Bluetooth CLASSIC (el manos libres del
+   micro, ver audio_bt.h) y las dos pilas no conviven en el mismo controlador.
+   Sin BLE no hay app por Bluetooth: todo lo demas queda igual, y el nodo se
+   comporta como uno con `bt=0`. */
+#ifndef SIN_BLE
 #include <NimBLEDevice.h>
+#endif
 #include <sys/select.h>
 #include <mbedtls/md.h>
 #ifdef PLACA_TBEAM
@@ -278,8 +291,10 @@ static bool hay_oled = false;
 #define UUID_NUS_RX   "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // movil -> nodo
 #define UUID_NUS_TX   "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // nodo -> movil
 
+#ifndef SIN_BLE
 static NimBLEServer         *ble_srv = nullptr;
 static NimBLECharacteristic *ble_tx  = nullptr;
+#endif
 /* Handle de la conexion, o 0xFFFF si no hay ninguna. Es lo que hace falta para
    pedir parametros de conexion y para desconectar a mano. */
 static volatile uint16_t ble_conn = 0xFFFF;
@@ -405,6 +420,10 @@ static int      bt_visible = -1;
    watchdog de 10 s. */
 static bool ble_escribe(const uint8_t *d, size_t n)
 {
+#ifdef SIN_BLE
+    (void)d; (void)n;
+    return false;
+#else
     if (!ble_tx || ble_conn == 0xFFFF || !ble_suscrito) return false;
     /* MTU-3: los tres bytes son la cabecera ATT de la notificacion. Con el MTU
        minimo del estandar (23) quedan 20 utiles; Android negocia 517 y entonces
@@ -439,6 +458,7 @@ static bool ble_escribe(const uint8_t *d, size_t n)
         ble_tx->notify(d + i, k);
     }
     return true;
+#endif
 }
 
 static void bt_datos(const uint8_t *d, size_t n)
@@ -646,6 +666,14 @@ static uint32_t n_net = 0;
 static uint32_t n_calladas = 0;      // repeticiones que NO hizo falta hacer
 static char     ultimo_ind[MAX_INDICATIVO + 1] = "";
 static int      ultimo_rssi = 0;
+#ifdef AUDIO_BT
+/* Quien HABLA, que no es lo mismo que lo ultimo oido: las balizas de los
+   vecinos tambien pasan por `ultimo_ind`, y en la pantalla del transceptor lo
+   que se quiere ver es la ultima voz y con cuanta señal llego. */
+static char     hablante[MAX_INDICATIVO + 1] = "";
+static int      hablante_rssi = 0;
+static bool     hablante_rf = false;
+#endif
 static uint32_t t_pantalla = 0;
 static bool     redibujar = true;
 static uint32_t t_actividad = 0;      // ultimo suceso que merece encender
@@ -709,7 +737,7 @@ static uint8_t cola_n = 0;
  *     nodo, que por radio no se oirian entre ellos (el nodo no escucha sus
  *     propias emisiones).
  */
-enum : uint8_t { TUBO_LIBRE = 0, TUBO_USB, TUBO_BT, TUBO_TCP, TUBO_ENLACE };
+enum : uint8_t { TUBO_LIBRE = 0, TUBO_USB, TUBO_BT, TUBO_TCP, TUBO_ENLACE, TUBO_LOCAL };
 
 /* El buffer de desentramado del cable y del Bluetooth es grande porque por ahi
    pasan los trozos del firmware en una actualizacion; los clientes de WiFi solo
@@ -737,7 +765,15 @@ enum : uint8_t { TUBO_LIBRE = 0, TUBO_USB, TUBO_BT, TUBO_TCP, TUBO_ENLACE };
    y no podria salir hacia C. Cada ranura puede ser saliente (host configurado)
    o entrante, indistintamente. */
 #define ENLACES_N     4
+/* Y con AUDIO_LOCAL, uno mas al final: el microfono y el altavoz de la propia
+   placa. No lleva buffer ni socket; `kiss_a` no le escribe nada (el audio le
+   llega por `audio_rx`), y los bucles de enlaces se cortan en T_ENLN para que
+   no lo recorran. */
+#ifdef AUDIO_LOCAL
+#define TUBOS_N       (2 + TCP_N + ENLACES_N + 1)
+#else
 #define TUBOS_N       (2 + TCP_N + ENLACES_N)
+#endif
 
 struct Tubo {
     uint8_t   clase = TUBO_LIBRE;
@@ -760,6 +796,10 @@ static Tubo tubos[TUBOS_N];
 #define T_TCP0    2
 #define T_ENL0    (2 + TCP_N)                 // primera ranura de enlace
 #define T_ENL     T_ENL0                       // (el primero, para lo que mire uno solo)
+#define T_ENLN    (T_ENL0 + ENLACES_N)         // uno despues del ultimo enlace
+#ifdef AUDIO_LOCAL
+#define T_LOCAL   T_ENLN                       // el audio de la propia placa
+#endif
 
 /* Arbitraje del microfono. Con varios usuarios colgados del mismo nodo solo
    puede hablar uno: el canal es simplex y el nodo tiene una sola radio. El que
@@ -976,7 +1016,7 @@ static bool apuntar(uint32_t src, uint8_t stream, uint8_t seq, uint8_t tipo,
    mandarlos, y tampoco tiene nada que contar de Internet. */
 static bool hay_enlace()
 {
-    for (int i = T_ENL0; i < TUBOS_N; i++)
+    for (int i = T_ENL0; i < T_ENLN; i++)
         if (tubos[i].clase == TUBO_ENLACE) return true;
     return false;
 }
@@ -1174,6 +1214,13 @@ static void entrega_al_anfitrion(const uint8_t *b, uint8_t len, float rssi,
 {
     uint8_t tipo   = b[2] >> 4;
     uint8_t stream = b[6], seq = b[7];
+#ifdef AUDIO_LOCAL
+    /* Al altavoz de la placa, lo mismo que a un movil: lo del aire y lo de los
+       otros clientes del nodo. Lo suyo propio no (salvo == T_LOCAL). */
+    if (salvo != T_LOCAL && (tipo == T_INICIO || tipo == T_VOZ || tipo == T_FIN))
+        audio_rx(tipo, b + CAB_LEN, len - CAB_LEN,
+                 ((uint32_t)b[3] << 16) | ((uint32_t)b[4] << 8) | b[5], stream);
+#endif
     uint8_t out[8 + MAX_PAYLOAD];
     uint8_t n = 0;
     out[n++] = (uint8_t)(int8_t)constrain((int)rssi, -128, 127);
@@ -1272,6 +1319,12 @@ static void suelta_ptt(const char *motivo)
         emitir(b, CAB_LEN);
         transmitiendo = false;
     }
+#ifdef AUDIO_LOCAL
+    /* Si el que hablaba era la propia placa, se le dice a su audio: con un
+       micro Bluetooth el PTT es un conmutador y nadie lo soltaria. */
+    if (ptt_de == T_LOCAL)
+        audio_ptt_denegado(motivo && !strncmp(motivo, "TOT", 3) ? "cortado por TOT" : "cortado");
+#endif
     ptt_de = -1;
     redibujar = true;
     avisa_ptt();
@@ -1309,7 +1362,7 @@ static void vigila_ptt()
    lo que vuelve rebotado ya esta apuntado con su (src, stream, seq, tipo). */
 static void reparte_al_enlace(const uint8_t *b, uint8_t len, int salvo)
 {
-    for (int i = T_ENL0; i < TUBOS_N; i++)
+    for (int i = T_ENL0; i < T_ENLN; i++)
         if (i != salvo && tubos[i].clase == TUBO_ENLACE)
             kiss_a(tubos[i], CMD_AIRE, b, len);
 }
@@ -1379,8 +1432,18 @@ static void procesar(uint8_t *b, uint8_t len, float rssi, float snr)
             for (int k = 0; k < li; k++) if (ind[k] == 0) { li = k; break; }
             memcpy(ultimo_ind, ind, li);
             ultimo_ind[li] = 0;
+#ifdef AUDIO_BT
+            if (tipo == T_INICIO) {
+                memcpy(hablante, ind, li);
+                hablante[li] = 0;
+                hablante_rf = por_rf;
+            }
+#endif
         }
     }
+#ifdef AUDIO_BT
+    if (por_rf && (tipo == T_INICIO || tipo == T_VOZ)) hablante_rssi = (int)rssi;
+#endif
 
     /* ─── UNA BALIZA SOLO SIGNIFICA ALGO POR RADIO ───
        Una baliza dice "estoy aqui y me oyes". Por Internet eso es mentira: no
@@ -1479,6 +1542,12 @@ static void despierta_pantalla()
 static void gestiona_pantalla()
 {
     if (!hay_oled) return;
+#ifdef AUDIO_BT
+    /* En el transceptor la pantalla es el UNICO instrumento: mientras se
+       transmite o se recibe no se apaga nunca, por larga que sea la rafaga, y
+       el medio minuto cuenta desde que acaba. */
+    if (transmitiendo || canal_ocupado) t_actividad = millis();
+#endif
     bool debe = (pantalla_modo == PANTALLA_FIJA) ||
                 (pantalla_modo == PANTALLA_AUTO &&
                  millis() - t_actividad < PANTALLA_MS);
@@ -1490,6 +1559,251 @@ static void gestiona_pantalla()
     oled.ssd1306_command(pantalla_on ? SSD1306_DISPLAYON : SSD1306_DISPLAYOFF);
     if (pantalla_on) redibujar = true;
 }
+
+#ifdef AUDIO_BT
+/* LA PANTALLA DEL TRANSCEPTOR: UN S-METRO DE AGUJA, COMO UN CB DE TODA LA VIDA.
+ *
+ * Sin movil, la OLED es el unico instrumento, y lo que se mira de reojo con la
+ * radio en el cinturon es poco: si se transmite o se recibe, quien, y con
+ * cuanto. Asi que solo hay eso (decision del usuario, 1-oct-2026):
+ *   - arriba, RX/TX en video inverso, el indicativo de quien habla (el propio
+ *     en TX) y la frecuencia;
+ *   - un instrumento de aguja con DOBLE ESCALA, como los de 27 MHz: S arriba
+ *     (1-3-5-7-9 y +20/+40, S9 = -93 dBm, la escala IARU de la app) y PWR en mW
+ *     abajo. En RX la aguja marca la señal; en TX, la potencia (nominal: el
+ *     SX1278 no mide lo que sale).
+ *   - la aguja con INERCIA: sube rapido y cae despacio, que es lo que hace que
+ *     un S-metro se lea y no baile.
+ *   - y un icono diminuto de Bluetooth en la esquina: fijo con el micro
+ *     enganchado, parpadeando si el emparejado no esta, nada si no hay
+ *     ninguno. Sin el no habria forma de saber por que no suena. Y en la
+ *     esquina contraria el papel en la red: torre si hay celda, R si repite
+ *     ella (digipeater), nada si esta sola.
+ * El aviso del TOT ocupa el sitio del indicativo los ultimos 15 s, parpadeando.
+ * ⚠️ La fuente de Adafruit GFX es de 7 bits: TEXTO SIN TILDES. */
+static uint8_t bateria_pct();
+
+/* DEMOSTRACION para `audio captura N`: dibuja la pantalla de TX (1), de RX
+   (2) o de reposo con pila (3) con datos inventados, SIN emitir nada. Sirve para ver y ajustar el
+   diseño desde otra maquina; no toca la radio ni el arbitraje. */
+static uint8_t pantalla_demo = 0;
+
+/* Geometria del instrumento: el eje de la aguja cae POR DEBAJO de la pantalla,
+   asi el arco es ancho y plano como el de un medidor de verdad. */
+static const float AG_X = 64, AG_Y = 100, AG_R = 78, AG_ANG = 40.0f * PI / 180;
+
+static void punto_arco(float f, float r, int &x, int &y)
+{
+    float a = -AG_ANG + 2 * AG_ANG * f;
+    x = (int)lroundf(AG_X + r * sinf(a));
+    y = (int)lroundf(AG_Y - r * cosf(a));
+}
+
+static void etiqueta(float f, float r, const char *s)
+{
+    int x, y;
+    punto_arco(f, r, x, y);
+    int w = 6 * (int)strlen(s) - 1;
+    x -= w / 2;
+    if (x < 0) x = 0;
+    if (x > 128 - w - 1) x = 128 - w - 1;     // que el "+40" no se salga
+    oled.setCursor(x, y - 3);
+    oled.print(s);
+}
+
+/* De dBm a la escala S: S9 = -93 dBm y 6 dB por unidad (IARU, VHF/UHF), que
+   ocupa el 60 % del arco; de S9 a +40 dB, el resto. */
+static float escala_s(int dbm)
+{
+    float f = dbm <= -93 ? (dbm + 147) / 54.0f * 0.6f : 0.6f + (dbm + 93) / 40.0f * 0.4f;
+    return f < 0 ? 0 : (f > 1 ? 1 : f);
+}
+
+static const float PWR_MAX_MW = 50;            // 17 dBm, el tope del SX1278
+static float aguja = 0;                         // donde esta la aguja (0..1)
+
+static void instrumento(float aguja)
+{
+    /* El arco, con la zona de S9 en adelante en trazo doble, como el rojo de
+       los medidores de verdad. */
+    for (float f = 0; f <= 1.0001f; f += 0.004f) {
+        int x, y;
+        punto_arco(f, AG_R, x, y);
+        oled.drawPixel(x, y, SSD1306_WHITE);
+        if (f >= 0.6f) { punto_arco(f, AG_R - 1, x, y); oled.drawPixel(x, y, SSD1306_WHITE); }
+    }
+    /* Escala S, por fuera. */
+    static const float MARCA_S[] = { 0.0667f, 0.2f, 0.333f, 0.467f, 0.6f, 0.8f, 1.0f };
+    static const char *TXT_S[]   = { "1", "3", "5", "7", "9", "+20", "+40" };
+    for (int i = 0; i < 7; i++) {
+        int x0, y0, x1, y1;
+        punto_arco(MARCA_S[i], AG_R, x0, y0);
+        punto_arco(MARCA_S[i], AG_R + 4, x1, y1);
+        oled.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+        etiqueta(MARCA_S[i], AG_R + 9, TXT_S[i]);
+    }
+    /* Escala de potencia, por dentro: marcas cada 10 mW y numeros solo en
+       10, 25 y 50, que con mas no se lee nada en 128 puntos. */
+    for (int mw = 10; mw <= 50; mw += 10) {
+        int x0, y0, x1, y1;
+        punto_arco(mw / PWR_MAX_MW, AG_R, x0, y0);
+        punto_arco(mw / PWR_MAX_MW, AG_R - 3, x1, y1);
+        oled.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+    }
+    etiqueta(10 / PWR_MAX_MW, AG_R - 11, "10");
+    etiqueta(25 / PWR_MAX_MW, AG_R - 11, "25");
+    etiqueta(50 / PWR_MAX_MW, AG_R - 11, "50");
+    /* Las unidades, donde las pone un medidor de verdad. */
+    oled.setCursor(1, 22);
+    oled.print("S");
+    oled.setCursor(58, 45);
+    oled.print("mW");
+    /* La aguja, del eje (fuera de la pantalla) al arco. */
+    int x0, y0, x1, y1;
+    punto_arco(aguja, 0, x0, y0);
+    punto_arco(aguja, AG_R + 2, x1, y1);
+    oled.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+}
+
+/* Bluetooth: el rune de siempre, 5x8 puntos. */
+static void icono_bt(int x, int y)
+{
+    oled.drawLine(x + 2, y, x + 2, y + 7, SSD1306_WHITE);
+    oled.drawLine(x + 2, y, x + 4, y + 2, SSD1306_WHITE);
+    oled.drawLine(x + 4, y + 2, x, y + 5, SSD1306_WHITE);
+    oled.drawLine(x + 2, y + 7, x + 4, y + 5, SSD1306_WHITE);
+    oled.drawLine(x + 4, y + 5, x, y + 2, SSD1306_WHITE);
+}
+
+/* EN REPOSO, en el sitio de RX/TX: la pila rellena segun la carga, o un rayo si
+   no hay pila que medir (por USB sin bateria `bateria_pct()` dice 0: el pin
+   flota y no se inventa un numero). Devuelve donde acaba, en x. */
+static int pinta_alimentacion(uint8_t pct)
+{
+    if (!pct) {
+        /* Rayo, 7x9. */
+        oled.drawLine(5, 0, 1, 4, SSD1306_WHITE);
+        oled.drawLine(1, 4, 5, 4, SSD1306_WHITE);
+        oled.drawLine(5, 4, 1, 8, SSD1306_WHITE);
+        oled.drawLine(6, 0, 2, 4, SSD1306_WHITE);
+        oled.drawLine(6, 4, 2, 8, SSD1306_WHITE);
+        return 10;
+    }
+    /* Pila de 12x7 con su borne, rellena en proporcion. */
+    oled.drawRect(0, 1, 12, 7, SSD1306_WHITE);
+    oled.fillRect(12, 3, 2, 3, SSD1306_WHITE);
+    int lleno = (pct * 10 + 50) / 100;
+    if (lleno) oled.fillRect(1, 2, lleno, 5, SSD1306_WHITE);
+    /* Sin porcentaje, a proposito: el relleno basta para saber si queda, y
+       el sitio es para el indicativo (decision del usuario, 1-oct-2026). */
+    return 19;
+}
+
+/* Torre con ondas, 11x8: hay una celda a la vista. */
+static void icono_celda(int x, int y)
+{
+    oled.drawLine(x + 5, y + 1, x + 2, y + 7, SSD1306_WHITE);    // patas
+    oled.drawLine(x + 5, y + 1, x + 8, y + 7, SSD1306_WHITE);
+    oled.drawLine(x + 4, y + 5, x + 6, y + 5, SSD1306_WHITE);    // travesaño
+    oled.drawPixel(x + 1, y, SSD1306_WHITE);                      // ondas
+    oled.drawLine(x, y + 1, x, y + 2, SSD1306_WHITE);
+    oled.drawPixel(x + 1, y + 3, SSD1306_WHITE);
+    oled.drawPixel(x + 9, y, SSD1306_WHITE);
+    oled.drawLine(x + 10, y + 1, x + 10, y + 2, SSD1306_WHITE);
+    oled.drawPixel(x + 9, y + 3, SSD1306_WHITE);
+}
+
+static void pinta_transceptor()
+{
+    uint32_t ahora = millis();
+    bool tx = transmitiendo || pantalla_demo == 1;
+    bool rx = !tx && (canal_ocupado || pantalla_demo == 2);
+    uint32_t desde = pantalla_demo == 1 ? ahora - 47000 : t_ptt;
+    const char *quien = pantalla_demo >= 2 ? "EA3ABC-7" : hablante;
+    int dbm = pantalla_demo == 2 ? -87 : hablante_rssi;
+    bool por_rf = pantalla_demo == 2 || hablante_rf;
+
+    /* La aguja: el objetivo, y la inercia hacia el. */
+    float mw = powf(10.0f, potencia / 10.0f);
+    float objetivo = tx ? mw / PWR_MAX_MW : (rx && por_rf ? escala_s(dbm) : 0);
+    if (pantalla_demo) aguja = objetivo;
+    else if (objetivo > aguja) aguja += (objetivo - aguja) * 0.6f;   // sube rapido
+    else aguja += (objetivo - aguja) * 0.2f;                         // cae despacio
+    if (objetivo > 1) aguja = 1;
+
+    oled.clearDisplay();
+    oled.setTextSize(1);
+    oled.setTextColor(SSD1306_WHITE);
+    /* ⚠️ Sin esto, la letra que no cabe a la derecha se va a la linea de abajo
+       y por la IZQUIERDA: el "0" del "+40" aparecia junto a la "S". */
+    oled.setTextWrap(false);
+
+    /* Cabecera: RX/TX en inverso, quien, y la frecuencia. */
+    if (tx || rx) {
+        oled.fillRect(0, 0, 15, 9, SSD1306_WHITE);
+        oled.setTextColor(SSD1306_BLACK);
+        oled.setCursor(2, 1);
+        oled.print(tx ? "TX" : "RX");
+        oled.setTextColor(SSD1306_WHITE);
+    }
+    char fq[10];
+    snprintf(fq, sizeof fq, "%.3f", frecuencia);
+    int x_fq = 128 - 6 * (int)strlen(fq);
+    int x_txt = 19;
+    if (!tx && !rx) x_txt = pinta_alimentacion(pantalla_demo == 3 ? 76 : bateria_pct());
+    /* Lo que quepa entre el principio y la frecuencia. */
+    int cabe = (x_fq - 4 - x_txt) / 6;
+    if (cabe < 0) cabe = 0;
+    oled.setCursor(x_txt, 1);
+    if (tx) {
+        uint32_t s = (ahora - desde) / 1000;
+        uint32_t queda = PTT_MAX_MS / 1000 > s ? PTT_MAX_MS / 1000 - s : 0;
+        if (queda <= 15) { if ((ahora / 300) & 1) oled.printf("TOT %lus", (unsigned long)queda); }
+        else oled.printf("%.*s", cabe, mi_indicativo);
+    } else if (rx) {
+        oled.printf("%.*s", cabe, quien[0] ? quien : "?");
+    } else {
+        /* El aviso de un corte se puede recortar; un indicativo NO: a medias
+           puede ser el de otra estacion. Entero o nada. */
+        const char *corte = ptt_ultimo_corte();
+        if (corte[0]) oled.printf("%.*s", cabe, corte);
+        else if ((int)strlen(quien) <= cabe) oled.print(quien);
+    }
+    oled.setCursor(x_fq, 1);
+    oled.print(fq);
+
+    instrumento(aguja);
+
+    /* El micro Bluetooth: FIJO si esta enganchado con el audio abierto,
+       PARPADEANDO si hay uno emparejado que no esta (apagado, fuera de
+       alcance, reconectando), y NADA si no hay ninguno emparejado. */
+    uint8_t fase = pantalla_demo ? (uint8_t)HFP_LISTO : hfp_fase();
+    if (fase == HFP_LISTO ||
+        ((fase == HFP_BUSCANDO || fase == HFP_SIN_AUDIO) && ((ahora / 500) & 1)))
+        icono_bt(1, 56);
+    /* Enfrente, EL PAPEL DE LA PLACA EN LA RED, con el mismo criterio con el
+       que decide si repetir (`hay_a_quien_repetir`):
+         - torre: hay una celda a la vista, y la placa se calla;
+         - R en negativo: repite ella, como un digipeater (no hay celda y hay
+           alguien a quien repetir, o perfil de repetidor fijo);
+         - nada: sola, o en «solo mi radio». */
+    bool celda = pantalla_demo ? pantalla_demo != 3 : hay_celda_a_la_vista();
+    bool repite = pantalla_demo ? pantalla_demo == 3 : hay_a_quien_repetir(0);
+    if (celda && !repite) {
+        icono_celda(116, 56);
+    } else if (repite) {
+        oled.fillRect(118, 55, 9, 9, SSD1306_WHITE);
+        oled.setTextColor(SSD1306_BLACK);
+        oled.setCursor(120, 56);
+        oled.print("R");
+        oled.setTextColor(SSD1306_WHITE);
+    }
+
+    oled.display();
+    redibujar = false;
+    t_pantalla = millis();
+}
+#endif  // AUDIO_BT
 
 static void pinta()
 {
@@ -1538,6 +1852,10 @@ static void pinta()
         return;
     }
 
+#ifdef AUDIO_BT
+    pinta_transceptor();
+    return;
+#endif
     oled.setTextSize(1);
     oled.setTextColor(SSD1306_WHITE);
     /* EL NOMBRE DEL CACHARRO A LA IZQUIERDA, EL INDICATIVO A LA DERECHA.
@@ -1633,7 +1951,7 @@ static void pinta()
     }
     {
         uint8_t enl = 0;
-        for (int i = T_ENL0; i < TUBOS_N; i++)
+        for (int i = T_ENL0; i < T_ENLN; i++)
             if (tubos[i].clase == TUBO_ENLACE) enl++;
         if (enl) {
             oled.setCursor(104, 34);
@@ -2073,7 +2391,7 @@ static String red_texto()
     for (int k = 0; k < SALIENTES_N; k++) {
         if (enlace_host[k].length() == 0) continue;
         bool pie = false;
-        for (int i = T_ENL0; i < TUBOS_N; i++)
+        for (int i = T_ENL0; i < T_ENLN; i++)
             if (tubos[i].clase == TUBO_ENLACE && tubos[i].salida_k == k) pie = true;
         r += " enlace=" + enlace_host[k] + ":" + String(enlace_puerto[k]) +
              (pie ? "(en pie)" : "(caido)");
@@ -2084,7 +2402,7 @@ static String red_texto()
              (pie ? "(en pie)" : "(caido)");
     }
     uint8_t entrantes = 0;
-    for (int i = T_ENL0; i < TUBOS_N; i++)
+    for (int i = T_ENL0; i < T_ENLN; i++)
         if (tubos[i].clase == TUBO_ENLACE && tubos[i].salida_k < 0) entrantes++;
     if (entrantes) r += " entrantes=" + String(entrantes);
     return r;
@@ -2174,7 +2492,11 @@ static void manda_estado()
                 conectado, que fue exactamente el rato perdido del 8-sep. */
              bt_conectado ? " (movil conectado)" : "",
              (unsigned long)bt_atasco, (unsigned long)bt_saltadas,
+#ifdef SIN_BLE
+             0u,
+#else
              (unsigned)(ble_srv ? ble_srv->getConnectedCount() : 0),
+#endif
              /* Que se vea de un vistazo si el nodo esta repitiendo o callado, y
                 por que. Sin este campo, "no repite" y "no hay nadie" son
                 indistinguibles desde fuera. */
@@ -2870,6 +3192,52 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
         break;
     }
 
+#ifdef AUDIO_LOCAL
+    /* Ver `audio_orden` en audio_local.cpp: prueba, banco, baliza, el micro
+       Bluetooth y el PTT de la placa. */
+    case CMD_AUDIO:
+#ifdef AUDIO_BT
+        /* 11 captura [demo]: la pantalla por el cable, un caracter por punto
+           (128x64). Juntando puntos de dos en dos no se lee: probado. */
+        if (n && d[0] == 11) {
+            if (!hay_oled) { log_txt("no hay pantalla que mirar"); break; }
+            pantalla_demo = n > 1 ? d[1] : 0;
+            bool estaba = pantalla_on;
+            pantalla_on = true;
+            pinta();
+            uint8_t *fb = oled.getBuffer();
+            for (int y = 0; y < 64; y++) {
+                char l[131];
+                l[0] = '|';
+                for (int x = 0; x < 128; x++)
+                    l[1 + x] = (fb[(y / 8) * 128 + x] & (1 << (y % 8))) ? '#' : ' ';
+                l[129] = '|';
+                l[130] = 0;
+                log_txt(l);
+            }
+            pantalla_demo = 0;
+            pantalla_on = estaba;
+            redibujar = true;
+            break;
+        }
+        if (n && d[0] == 10) {
+            if (n > 1) {
+                audio_wifi_permite(d[1]);
+                if (!d[1] && wifi_activo) {
+                    WiFi.disconnect(true); WiFi.mode(WIFI_OFF); wifi_activo = false;
+                    servidores_en_pie = false;
+                    ota_lista = false;
+                }
+                if (d[1] && !wifi_activo) arranca_wifi();
+            }
+            log_txt(audio_wifi_permitido() ? "WiFi del transceptor: permitido (se usa la red guardada)"
+                                           : "WiFi del transceptor: apagado");
+            break;
+        }
+#endif
+        audio_orden(d, n);
+        break;
+#endif
     case CMD_REINICIA: {
         if (ota_curso) { log_txt("no reinicio: hay una actualizacion en curso"); break; }
         if (transmitiendo) { log_txt("no reinicio: se esta transmitiendo"); break; }
@@ -2901,7 +3269,7 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
             for (int i = 0; i < SALIENTES_N; i++) {
                 enlace_host[i] = ""; enlace_puerto[i] = 0;
             }
-            for (int i = T_ENL0; i < TUBOS_N; i++)
+            for (int i = T_ENL0; i < T_ENLN; i++)
                 if (tubos[i].clase == TUBO_ENLACE) cierra_tubo(i);
             guarda_ajustes();
             log_txt("enlaces soltados");
@@ -3204,6 +3572,7 @@ static void olvida_conocidos()
    movil sencillamente no ve el nodo, en vez de conectar y ser expulsado.
    Con esto desaparece `bt_expulsa` y con el todo el lio de "me tiro al otro
    movil". */
+#ifndef SIN_BLE
 class CbServidorBLE : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer *srv, ble_gap_conn_desc *desc) override {
         ble_conn = desc->conn_handle;
@@ -3271,6 +3640,7 @@ class CbRxBLE : public NimBLECharacteristicCallbacks {
 static CbServidorBLE cb_servidor_ble;
 static CbRxBLE       cb_rx_ble;
 static CbTxBLE       cb_tx_ble;
+#endif  // SIN_BLE
 
 /* Aqui si: bucle principal, con toda la pila y sin prisa. */
 /* Suelta la ranura si el cliente lleva mucho callado. La app manda un latido
@@ -3335,7 +3705,9 @@ static void suelta_tcp_fantasma()
 static void suelta_ble(const char *motivo)
 {
     log_usb(motivo);
+#ifndef SIN_BLE
     if (ble_srv && ble_conn != 0xFFFF) ble_srv->disconnect(ble_conn);
+#endif
     ble_conn      = 0xFFFF;
     ble_mtu       = 23;
     ble_suscrito  = false;
@@ -3344,7 +3716,9 @@ static void suelta_ble(const char *motivo)
     bt_hablo      = false;
     bt_ultimo     = millis();
     cierra_tubo(T_BT);
+#ifndef SIN_BLE
     if (bt_activo) NimBLEDevice::startAdvertising();
+#endif
     redibujar = true;
 }
 
@@ -3356,10 +3730,12 @@ static void suelta_bt_fantasma()
        invisible sin que nada lo explique; con ella se arregla solo en la
        siguiente vuelta del bucle. Es barato y cubre TODOS los caminos por los
        que se puede perder ese evento, conocidos y por conocer. */
+#ifndef SIN_BLE
     if (bt_conectado && ble_srv && ble_srv->getConnectedCount() == 0) {
         suelta_ble("BLE: nadie conectado de verdad; se corrige y se anuncia");
         return;
     }
+#endif
     if (!bt_conectado) return;
     if (millis() - bt_ultimo < (bt_hablo ? BT_MUDO_MS : BT_MUDO_NUEVO_MS)) return;
     suelta_ble(bt_hablo ? "cliente BLE callado 45 s: se le suelta"
@@ -3386,7 +3762,9 @@ static void resuelve_conexion_bt()
     redibujar = true;
     /* Un cliente a la vez: mientras haya uno dentro, el nodo no se anuncia.
        Ver la nota de `CbServidorBLE`. */
+#ifndef SIN_BLE
     NimBLEDevice::stopAdvertising();
+#endif
     // El Bluetooth es un tubo mas: se abre aqui y se cierra al desconectar.
     tubos[T_BT].clase = TUBO_BT;
     tubos[T_BT].n = 0; tubos[T_BT].dentro = false; tubos[T_BT].escape = false;
@@ -3453,16 +3831,25 @@ static void arranca_bt()
     }
     snprintf(nombre_bt, sizeof nombre_bt, "PTTLoRa-%s", nombre_nodo);
 
+#ifdef SIN_BLE
+    if (true) {
+#else
     if (bt_modo == BT_APAGADO) {
+#endif
         /* Ni se arranca la pila. En una placa con la antena de BT/WiFi rota
            —que es el caso de la celda del tejado— encenderlo solo gasta
            memoria y corriente para que no lo vea nadie. */
         bt_ok = false;
         bt_activo = false;
         snprintf(nombre_bt, sizeof nombre_bt, "off");
+#ifdef SIN_BLE
+        log_usb("BLE: no lo lleva este firmware (transceptor: el Bluetooth es del micro)");
+#else
         log_usb("BLE: apagado por ajuste (bt=0)");
+#endif
         return;
     }
+#ifndef SIN_BLE
 
     uint32_t antes = ESP.getFreeHeap();
     NimBLEDevice::init(nombre_bt);
@@ -3518,6 +3905,7 @@ static void arranca_bt()
     for (char *c = bt_mac; *c; c++) if (*c >= 'a' && *c <= 'f') *c -= 32;
 
     visible_bt();
+#endif  // SIN_BLE
 }
 
 /* ANUNCIARSE. Un nodo que no se anuncia es indistinguible de uno apagado.
@@ -3529,7 +3917,11 @@ static void arranca_bt()
 static void visible_bt()
 {
     if (!bt_ok || bt_conectado) return;
+#ifdef SIN_BLE
+    bool ok = false;
+#else
     bool ok = NimBLEDevice::startAdvertising();
+#endif
     bt_visible = ok ? 0 : -1;
     if (!ok) log_usb("BLE: no se pudo empezar a anunciar");
 }
@@ -3561,7 +3953,9 @@ static void apaga_bt_si_toca()
     if (!bt_activo || bt_conectado) return;
     if (bt_modo != BT_VENTANA) return;
     if (millis() < VENTANA_BT_MS) return;
+#ifndef SIN_BLE
     NimBLEDevice::stopAdvertising();
+#endif
     bt_activo = false;
     redibujar = true;
     log_txt("BLE: se deja de anunciar (repetidor fijo). Reinicia el nodo para "
@@ -3634,6 +4028,13 @@ static String sin_bordes(const String &s)
 static void arranca_wifi()
 {
     if (red_modo == RED_OFF) return;
+#ifdef AUDIO_BT
+    if (!audio_wifi_permitido()) {
+        log_usb("WiFi: hay red guardada pero en el transceptor va APAGADO "
+                "(audio wifi 1 para encenderlo; cuesta audio y memoria)");
+        return;
+    }
+#endif
     wifi_ssid = sin_bordes(wifi_ssid);
     wifi_ssid2 = sin_bordes(wifi_ssid2);
 
@@ -3758,7 +4159,7 @@ static void atiende_clientes()
     WiFiClient e = srv_enlace.available();
     if (e) {
         int libre = -1;
-        for (int i = T_ENL0; i < TUBOS_N; i++)
+        for (int i = T_ENL0; i < T_ENLN; i++)
             if (tubos[i].clase == TUBO_LIBRE) { libre = i; break; }
         if (libre < 0) { e.stop(); }
         else {
@@ -3847,7 +4248,7 @@ static void atiende_enlace()
         // ¿Ya tiene ranura este destino? ¿Y hay alguno preferente en pie?
         bool puesto = false, hay_mejor = false;
         int libre = -1;
-        for (int i = T_ENL0; i < TUBOS_N; i++) {
+        for (int i = T_ENL0; i < T_ENLN; i++) {
             if (tubos[i].clase == TUBO_ENLACE) {
                 if (tubos[i].salida_k == k) puesto = true;
                 if (tubos[i].salida_k >= 0 && tubos[i].salida_k < k) hay_mejor = true;
@@ -3858,7 +4259,7 @@ static void atiende_enlace()
             /* El preferente ha vuelto: se suelta el respaldo, o nos quedariamos
                colgados de los dos para siempre. */
             if (puesto)
-                for (int i = T_ENL0; i < TUBOS_N; i++)
+                for (int i = T_ENL0; i < T_ENLN; i++)
                     if (tubos[i].clase == TUBO_ENLACE && tubos[i].salida_k == k) {
                         log_txt("respaldo soltado: el reflector principal ha vuelto");
                         cierra_tubo(i);
@@ -3992,13 +4393,22 @@ void setup()
     tubos[T_BT].buf = buf_bt;
     tubos[T_BT].cap = KISS_MAX;
 
-    pinMode(P_LED, OUTPUT);
-    digitalWrite(P_LED, LOW);
-    pinMode(P_BOTON, INPUT_PULLUP);
-    analogReadResolution(12);
-    carga_ajustes();
-    randomSeed(esp_random());
-
+    // LA PANTALLA, LO PRIMERO (igual que en bench/hfp-ag, y por el mismo
+    // motivo): si algo de lo que viene detras se atasca —el controlador
+    // Bluetooth Classic de audio_arranca(), la radio— al menos queda encendida
+    // y se ve por donde iba.
+    //
+    // SOSPECHA sin confirmar todavia (pantalla a oscuras en el transceptor con
+    // el micro Bluetooth emparejado, en banco externo igual que con bateria):
+    // aqui el orden estaba AL REVES de bench/hfp-ag, con audio_arranca() (y su
+    // hfp_arranca(), que arranca Bluedroid Classic) ANTES de Wire.begin().
+    // Bluedroid pide varias interrupciones al controlador; si se queda con la
+    // que Wire necesita para el bus I2C antes de que Wire la reserve,
+    // oled.begin() puede fallar sin mas (y esta integracion, a diferencia del
+    // banco, no tenia ni un log de si `hay_oled` salio bien). El log de abajo
+    // es justo para confirmarlo: si tras este cambio sigue sin verse NADA en
+    // la pantalla pero el log dice "oled: si", la causa es otra.
+    //
     // NO TOCAR GPIO16 EN ESTA PLACA. El pins_arduino.h del variant lo declara
     // como OLED_RST, pero en la T3 v1.6.1 real manejarlo cuelga el sistema:
     // arranque en bucle con TG1WDT_SYS_RESET, siempre en ese punto exacto.
@@ -4029,6 +4439,21 @@ void setup()
         oled.clearDisplay();
         oled.display();
     }
+    log_txt(hay_oled ? "oled: si" : "oled: NO la veo");
+
+#ifdef AUDIO_LOCAL
+    tubos[T_LOCAL].clase = TUBO_LOCAL;
+    tubos[T_LOCAL].autorizado = true;
+    audio_log = log_txt;
+    audio_arranca(P_BOTON, AUDIO_PIN_PTT);
+#endif
+
+    pinMode(P_LED, OUTPUT);
+    digitalWrite(P_LED, LOW);
+    pinMode(P_BOTON, INPUT_PULLUP);
+    analogReadResolution(12);
+    carga_ajustes();
+    randomSeed(esp_random());
 
     SPI.begin(P_SCK, P_MISO, P_MOSI, P_CS);
     int st = radio.begin(frecuencia, ancho, sf, cr, SYNC_WORD, potencia, 8);
@@ -4060,8 +4485,45 @@ void setup()
     manda_estado();
 }
 
+#ifdef AUDIO_LOCAL
+/* Lo que la tarea de audio tiene listo, emitido desde AQUI y por orden():
+   el mismo camino que la voz de la app, con su arbitraje y su TOT. */
+static void atiende_audio()
+{
+    audio_latido_loop();
+    if (audio_quiere_despertar()) { despierta_pantalla(); redibujar = true; }
+    AudioTx t;
+    while (audio_saca_tx(&t)) {
+        uint8_t d[2 + AUDIO_LOTE_MAX];
+        switch (t.tipo) {
+        case AUD_INICIO:
+            d[0] = t.modo;
+            orden(CMD_INICIO, d, 1, T_LOCAL);
+            if (ptt_de != T_LOCAL)
+                audio_ptt_denegado(canal_ocupado ? "canal ocupado" : "otro tiene el PTT");
+            break;
+        case AUD_VOZ:
+            d[0] = t.modo;
+            d[1] = t.n;
+            memcpy(d + 2, t.datos, t.len);
+            orden(CMD_VOZ, d, 2 + t.len, T_LOCAL);
+            /* El nodo ya no le da el turno (TOT, o se lo quito el que vigila):
+               que deje de codificar para nada. */
+            if (ptt_de != T_LOCAL) audio_ptt_denegado("sin turno");
+            break;
+        case AUD_FIN:
+            orden(CMD_FIN, nullptr, 0, T_LOCAL);
+            break;
+        }
+    }
+}
+#endif
+
 void loop()
 {
+#ifdef AUDIO_LOCAL
+    atiende_audio();
+#endif
     if (hay_paquete) {
         hay_paquete = false;
         uint8_t b[CAB_LEN + MAX_PAYLOAD];
@@ -4138,7 +4600,14 @@ void loop()
 
     // Refresco de pantalla: por evento, y en todo caso una vez por segundo para
     // que el estado del canal y la bateria no se queden congelados.
+#ifdef AUDIO_BT
+    /* En el transceptor, cada 100 ms mientras se habla, se escucha o la aguja
+       vuelve a reposo: es lo que hace que se MUEVA como una de verdad. */
+    if (redibujar || millis() - t_pantalla > ((transmitiendo || canal_ocupado || aguja > 0.01f)
+                                              ? 100u : 1000u)) pinta();
+#else
     if (redibujar || millis() - t_pantalla > 1000) pinta();
+#endif
 
     // Baliza de indicativo. Es identificacion de estacion, no adorno: por eso
     // sale tambien cuando el nodo esta solo repitiendo, sin nadie hablando.
