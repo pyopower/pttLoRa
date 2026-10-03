@@ -1544,13 +1544,39 @@ static void gestiona_pantalla()
     if (!hay_oled) return;
 #ifdef AUDIO_BT
     /* En el transceptor la pantalla es el UNICO instrumento: mientras se
-       transmite o se recibe no se apaga nunca, por larga que sea la rafaga, y
-       el medio minuto cuenta desde que acaba. */
+       transmite o se recibe no se apaga nunca, por larga que sea la rafaga. */
     if (transmitiendo || canal_ocupado) t_actividad = millis();
+    /* Y depende de la ALIMENTACION (peticion del usuario, 3-oct-2026): con
+       corriente externa, siempre encendida; con bateria, solo mientras se
+       transmite o se recibe (o se pulsa el boton), con 5 s de cola.
+       La LoRa32 v2.1 no tiene pin que diga si hay USB, asi que se deduce:
+         - sin bateria (bateria_pct()==0: el pin flota) = solo USB;
+         - bateria clavada arriba (>=98 %) mas de 2 min = cargada y enchufada;
+         - la carga SUBE 2 puntos o mas en 5 min = cargando por USB, y si BAJA
+           2 puntos, va a pilas. Entre medias se mantiene lo ultimo decidido.
+           Tarda unos minutos en decidirse al enchufar o desenchufar, y recien
+           cargada sin USB se queda encendida de mas un rato: errores baratos.
+       Se mira cada minuto: bateria_pct() muestrea el ADC. */
+    static uint32_t t_mira = 0, t_arriba = 0;
+    static uint8_t hist[6] = {0}, nh = 0, llenas = 0;
+    static bool externa = false;
+    if (!t_mira || millis() - t_mira > 60000UL) {
+        t_mira = millis();
+        uint8_t pct = bateria_pct();
+        hist[nh] = pct; nh = (nh + 1) % 6; if (llenas < 6) llenas++;
+        int antes = llenas >= 6 ? hist[nh] : -1;          // hace 5 min
+        if (pct >= 98) { if (!t_arriba) t_arriba = millis(); } else t_arriba = 0;
+        if (pct == 0 || (t_arriba && millis() - t_arriba > 120000UL)) externa = true;
+        else if (antes >= 0 && pct >= antes + 2) externa = true;
+        else if (antes >= 0 && pct + 2 <= antes) externa = false;
+    }
+    const uint32_t cola = externa ? 0xFFFFFFFFUL : 5000UL;
+#else
+    const uint32_t cola = PANTALLA_MS;
 #endif
     bool debe = (pantalla_modo == PANTALLA_FIJA) ||
                 (pantalla_modo == PANTALLA_AUTO &&
-                 millis() - t_actividad < PANTALLA_MS);
+                 (cola == 0xFFFFFFFFUL || millis() - t_actividad < cola));
     if (pantalla_modo == PANTALLA_OFF) debe = false;
     if (debe == pantalla_on) return;
     pantalla_on = debe;

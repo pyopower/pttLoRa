@@ -120,6 +120,16 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
   no vuelve a abrir. `nodo.py audio` lo enseña en `ptt=volumen|propio|propio(abajo)`.
   **Sin probar todavía en la placa**: falta ver si P1 también manda `AT+BLDN` con
   solo HFP (entonces abriría el PTT).
+- **Pantalla segun la alimentacion** (3-oct-2026): con corriente externa, siempre
+  encendida; con bateria, solo mientras transmite o recibe (o al pulsar PRG) y
+  5 s de cola. La LoRa32 v2.1 no tiene pin de USB, asi que se deduce de la
+  bateria: sin pila (pin al aire), clavada arriba mas de 2 min, o subiendo 2
+  puntos en 5 min = externa; bajando 2 puntos = pilas. Tarda unos minutos en
+  decidirse al enchufar o desenchufar.
+- **Abbree en la placa (3-oct-2026)**: engancha (HFP, CVSD 8 kHz) y por su
+  altavoz se oye lo que llega por LoRa. Pero con el audio abierto **sus botones
+  no mandan nada por HFP** (ni PTT, ni P1, ni +/-): el PTT va por AVRCP, que el
+  firmware no tiene. Pendiente: AVRCP (el Abbree solo lo abre tras A2DP).
 - **Vigilante de tareas**: `loop()` no suelta nunca la CPU 1 y ESP-IDF, por
   defecto, vigila la tarea de reposo de esa CPU. Reinició nodoCASA en reposo a los
   276 s («reset=wdt-tarea»). Se apaga como en Arduino a secas
