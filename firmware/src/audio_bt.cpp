@@ -11,6 +11,8 @@
 #include "esp_bt_device.h"
 #include "esp_gap_bt_api.h"
 #include "esp_hf_ag_api.h"
+#include "esp_a2dp_api.h"
+#include "esp_avrc_api.h"
 #include "freertos/ringbuf.h"
 #include "esp_coexist.h"
 
@@ -43,6 +45,17 @@ static volatile bool ptt_propio = false;
 static volatile bool bldn_abajo = false;
 static volatile uint32_t t_bldn = 0;
 static volatile uint32_t reabrir_en = 0;
+
+/* AVRCP, para el PTT del Abbree (KST_vHMIC010). Medido el 3-oct-2026 con el
+   micro pegado a la placa: con el audio de manos libres abierto, que es como
+   trabaja el transceptor, NINGUN boton del Abbree manda nada por HFP. Su PTT
+   va por AVRCP —FAST FORWARD al pulsar (una rafaga: toque y medio segundo
+   mantenido) y REWIND al soltar—, igual que con un movil. Y el Abbree solo abre
+   AVRCP despues de A2DP, asi que la placa se registra tambien como FUENTE A2DP
+   (nunca manda musica: el audio sigue por el canal de manos libres) y abre ese
+   enlace en cuanto el micro esta enganchado. */
+static volatile bool a2dp_ok = false, avrc_ok = false, avrc_abajo = false;
+static volatile uint32_t abrir_a2dp_en = 0;
 
 /* Volumen del altavoz que se le impone al micro tras cada pulsación: alto para
    oír bien y con margen para que el botón siga mandando eventos (en el tope de
@@ -244,6 +257,64 @@ static void boton_rellamada()
     else if (ptt_origen() == PTT_O_BT) ptt_pulsa(PTT_O_BT, false);
 }
 
+/* La tecla del Abbree por AVRCP: FF = pulsar, REWIND = soltar. Solo cuenta
+   el "pulsado" de cada una; la rafaga del FF trae dos y se ignora la segunda. */
+static void tecla_avrcp(uint8_t key, uint8_t estado)
+{
+    if (estado != ESP_AVRC_PT_CMD_STATE_PRESSED) return;
+    bool abajo;
+    if (key == ESP_AVRC_PT_CMD_FAST_FORWARD) abajo = true;
+    else if (key == ESP_AVRC_PT_CMD_REWIND) abajo = false;
+    else { audio_dice("micro: tecla AVRCP 0x%02x", key); return; }
+    if (!ptt_propio) {
+        ptt_propio = true;
+        guardar_propio = true;
+        audio_dice("micro: trae PTT propio (AVRCP); el volumen deja de ser PTT");
+    }
+    if (abajo == avrc_abajo) return;
+    avrc_abajo = abajo;
+    audio_dice("micro: PTT %s (AVRCP)", abajo ? "abajo" : "arriba");
+    if (abajo) ptt_pulsa(PTT_O_BT, true);
+    else if (ptt_origen() == PTT_O_BT) ptt_pulsa(PTT_O_BT, false);
+}
+
+static void avrc_tg(esp_avrc_tg_cb_event_t ev, esp_avrc_tg_cb_param_t *p)
+{
+    switch (ev) {
+    case ESP_AVRC_TG_CONNECTION_STATE_EVT:
+        avrc_ok = p->conn_stat.connected;
+        audio_dice("micro: AVRCP %s", avrc_ok ? "enlazado" : "cerrado");
+        if (!avrc_ok && avrc_abajo) {             // se fue con el PTT pulsado
+            avrc_abajo = false;
+            if (ptt_origen() == PTT_O_BT) ptt_suelta("se fue el AVRCP del micro");
+        }
+        break;
+    case ESP_AVRC_TG_PASSTHROUGH_CMD_EVT:
+        tecla_avrcp(p->psth_cmd.key_code, p->psth_cmd.key_state);
+        break;
+    default: break;
+    }
+}
+
+static void avrc_ct(esp_avrc_ct_cb_event_t, esp_avrc_ct_cb_param_t *) {}
+
+static void a2dp(esp_a2d_cb_event_t ev, esp_a2d_cb_param_t *p)
+{
+    if (ev == ESP_A2D_CONNECTION_STATE_EVT) {
+        a2dp_ok = p->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED;
+        if (p->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED ||
+            p->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED)
+            audio_dice("micro: A2DP %s (solo para el AVRCP)", a2dp_ok ? "enlazado" : "cerrado");
+    }
+}
+
+/* Nunca se arranca el flujo A2DP; si alguien lo pidiera, silencio. */
+static int32_t a2dp_datos(uint8_t *d, int32_t len)
+{
+    if (d && len > 0) memset(d, 0, len);
+    return len > 0 ? len : 0;
+}
+
 /* Una orden AT que no es del estándar. Si parece de PTT, se obedece. */
 static void boton_desconocido(const char *at)
 {
@@ -277,11 +348,13 @@ static void manos_libres(esp_hf_cb_event_t ev, esp_hf_cb_param_t *p)
             /* El audio se abre en cuanto hay conexión: un transceptor tiene que
                estar escuchando siempre, no sólo durante una «llamada». */
             esp_bt_hf_connect_audio(par);
+            abrir_a2dp_en = millis() + 1500;    // y A2DP, para que el micro abra AVRCP
         } else if (p->conn_stat.state == ESP_HF_CONNECTION_STATE_DISCONNECTED) {
             /* Se fue el micro con el PTT abierto: se cierra, o seguiría
                transmitiendo silencio hasta el TOT. */
             if (ptt_origen() == PTT_O_BT) ptt_suelta("se fue el micro");
             bldn_abajo = false;            // al volver, el botón estará arriba
+            avrc_abajo = false;
             audio_abierto = false;
         }
         break;
@@ -447,6 +520,23 @@ bool hfp_arranca()
     esp_bt_gap_set_pin(ESP_BT_PIN_TYPE_FIXED, 4, pin);
     esp_bt_hf_register_callback(manos_libres);
     esp_bt_hf_init(par);
+    /* AVRCP antes que A2DP, como en los ejemplos de ESP-IDF. Destino (TG) para
+       recibir las teclas del micro; controlador (CT) porque sin el algunos
+       auriculares no completan el enlace. */
+    esp_avrc_ct_register_callback(avrc_ct);
+    esp_avrc_ct_init();
+    esp_avrc_tg_register_callback(avrc_tg);
+    esp_avrc_tg_init();
+    {
+        esp_avrc_psth_bit_mask_t teclas = {0};
+        esp_avrc_tg_get_psth_cmd_filter(ESP_AVRC_PSTH_FILTER_ALLOWED_CMD, &teclas);
+        esp_avrc_psth_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &teclas, ESP_AVRC_PT_CMD_FAST_FORWARD);
+        esp_avrc_psth_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &teclas, ESP_AVRC_PT_CMD_REWIND);
+        esp_avrc_tg_set_psth_cmd_filter(ESP_AVRC_PSTH_FILTER_SUPPORTED_CMD, &teclas);
+    }
+    esp_a2d_register_callback(a2dp);
+    esp_a2d_source_register_data_callback(a2dp_datos);
+    esp_a2d_source_init();
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 
     rb_mic = xRingbufferCreate(3072, RINGBUF_TYPE_BYTEBUF);
@@ -479,6 +569,10 @@ void hfp_atiende()
     if (!slc && hay_par && millis() - t_reintento > 15000) {
         t_reintento = millis();
         esp_bt_hf_connect(par);
+    }
+    if (abrir_a2dp_en && (int32_t)(millis() - abrir_a2dp_en) >= 0) {
+        abrir_a2dp_en = 0;
+        if (slc && !a2dp_ok && hay_par) esp_a2d_source_connect(par);
     }
     if (reabrir_en && (int32_t)(millis() - reabrir_en) >= 0) {
         reabrir_en = 0;
@@ -532,9 +626,10 @@ void hfp_estado(char *s, size_t cap)
     char m[18] = "ninguno";
     if (hay_par) mac_txt(par, m);
     snprintf(s, cap,
-             "micro: %s %s slc=%s audio=%s ptt=%s pila=%uB rx=%luB vacios=%lu/%lu tirados=%lu "
+             "micro: %s %s slc=%s audio=%s a2dp=%s avrcp=%s ptt=%s pila=%uB rx=%luB vacios=%lu/%lu tirados=%lu "
              "tx=%luB huecos=%lu agc=x%.1f rms=%lu pico=%lu",
              m, nombre_par[0] ? nombre_par : "-", slc ? "si" : "no", audio_abierto ? "si" : "no",
+             a2dp_ok ? "si" : "no", avrc_ok ? "si" : "no",
              ptt_propio ? (bldn_abajo ? "propio(abajo)" : "propio") : "volumen",
              (unsigned)heap_pila, (unsigned long)bytes_mic, (unsigned long)mic_vacios,
              (unsigned long)mic_bloques, (unsigned long)mic_tirados, (unsigned long)bytes_alt,

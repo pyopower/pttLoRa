@@ -129,7 +129,12 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
 - **Abbree en la placa (3-oct-2026)**: engancha (HFP, CVSD 8 kHz) y por su
   altavoz se oye lo que llega por LoRa. Pero con el audio abierto **sus botones
   no mandan nada por HFP** (ni PTT, ni P1, ni +/-): el PTT va por AVRCP, que el
-  firmware no tiene. Pendiente: AVRCP (el Abbree solo lo abre tras A2DP).
+  firmware no tenia. **Resuelto con AVRCP** (3-oct-2026): la placa se registra
+  como fuente A2DP (sin mandar musica nunca) para que el Abbree abra AVRCP, y
+  recibe FAST FORWARD = PTT abajo, REWIND = PTT arriba. Validado de punta a
+  punta: Abbree -> placa -> LoRa -> celda -> reflector -> app, y al reves.
+  Ojo al probar con la app: si tiene el MISMO indicativo que la placa, el
+  servicio de datos no se la reenvia (anti-eco); usar un sufijo (C31AG-7).
 - **Vigilante de tareas**: `loop()` no suelta nunca la CPU 1 y ESP-IDF, por
   defecto, vigila la tarea de reposo de esa CPU. Reinició nodoCASA en reposo a los
   276 s («reset=wdt-tarea»). Se apaga como en Arduino a secas

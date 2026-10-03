@@ -50,3 +50,7 @@ CONFIG_LOG_DEFAULT_LEVEL=1
 # 5 s sin bloquearse en ningún sitio, la placa se reinicia. Pasó en nodoCASA el
 # 2-oct-2026 a los 276 s de arrancar, en reposo («reset=wdt-tarea»).
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+# --- A2DP + AVRCP, solo para el PTT del Abbree (3-oct-2026) ---
+# El Abbree manda su PTT por AVRCP (FF/REWIND) y solo abre AVRCP tras A2DP: la
+# placa se registra como fuente A2DP sin llegar a mandar musica nunca.
+CONFIG_BT_A2DP_ENABLE=y
