@@ -775,7 +775,7 @@ bool hfp_emparejando(char *l1, char *l2, size_t cap)
     case 1: {
         int queda = 10 * (emp_auto ? 3 - emp_intentos : 1) - (int)((millis() - emp_t) / 1000);
         snprintf(l1, cap, "Buscando micro %ds", queda < 0 ? 0 : queda);
-        snprintf(l2, cap, "%s", emp_auto ? "ponlo a emparejar" : "(desde la app)");
+        snprintf(l2, cap, "%s", emp_auto ? "ponlo a emparejar" : "(desde la web)");
         return true;
     }
     case 2:

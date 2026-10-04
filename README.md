@@ -62,6 +62,16 @@ Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, ojo, elige siempre la **versi�
 
 ## ⭐ Camino A · El transceptor autónomo
 
+<p align="center">
+  <img src="docs/img/transceptor-txrx.gif" width="440"
+       alt="Pantalla del transceptor: reposo, transmitiendo y recibiendo">
+</p>
+
+*La pantalla de la placa, capturada de la propia placa por USB: en reposo (la
+pila, el micro enganchado y la frecuencia), **TX** con la potencia en mW y
+**RX** con el S-metro y quién habla. Los indicativos de TX y RX son de
+demostración.*
+
 **Lo que necesitas:** una LoRa32 v2.1 de 433 MHz y un **micro-altavoz
 Bluetooth con PTT** de los que se venden para POC. El probado es un Abbree,
 que se anuncia como `KST_vHMIC010`.
@@ -81,6 +91,9 @@ formas:
 - **Sin ordenador**: pulsa **RST dos veces seguidas** (la segunda antes de
   3 s). La pantalla pone «EMPAREJAR MICRO BT», busca durante 30 s y se queda
   con el micro que oiga más fuerte.
+
+  <img src="docs/img/transceptor-emparejar.png" width="320"
+       alt="Pantalla EMPAREJAR MICRO BT con la cuenta atrás">
 
 Ya está: la placa recuerda el micro y **se reconecta sola** cada vez que lo
 enciendes. Aprietas el PTT del micro y hablas.
