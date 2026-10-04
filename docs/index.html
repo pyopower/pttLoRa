@@ -24,6 +24,23 @@
   .navegador .titulo { font-weight: 600; }
   code { background: rgba(128,128,128,.16); padding: .1em .35em; border-radius: .3em; }
   footer { margin-top: 3rem; font-size: .9rem; opacity: .7; }
+  .cfg button { font: inherit; padding: .45rem .9rem; border-radius: .45rem;
+                border: 1px solid rgba(128,128,128,.5); background: rgba(128,128,128,.12);
+                color: inherit; cursor: pointer; margin: .2rem .3rem .2rem 0; }
+  .cfg button:disabled { opacity: .45; cursor: default; }
+  .cfg input { font: inherit; padding: .4rem .6rem; border-radius: .45rem;
+               border: 1px solid rgba(128,128,128,.5); background: transparent;
+               color: inherit; width: 9rem; text-transform: uppercase; }
+  .cfg .fila { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: .5rem 0; }
+  .cfg .estado { font-weight: 600; }
+  #micros { list-style: none; padding: 0; margin: .4rem 0; }
+  #micros li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+               border: 1px solid rgba(128,128,128,.3); border-radius: .45rem;
+               padding: .35rem .7rem; margin: .3rem 0; gap: .4rem; }
+  #micros small { opacity: .7; }
+  #registro { max-height: 12rem; overflow: auto; font-size: .78rem; white-space: pre-wrap;
+              word-break: break-all; background: rgba(128,128,128,.1); padding: .5rem;
+              border-radius: .4rem; margin: .5rem 0 0; }
   a { color: inherit; }
 </style>
 </head>
@@ -80,6 +97,48 @@ puerto.</strong> Tarda menos de un minuto.</p>
   <esp-web-install-button manifest="manifest-tbeam.json"></esp-web-install-button>
 </div>
 
+<div class="placa">
+  <h2>LilyGO LoRa32 v2.1 · <span style="opacity:.8">transceptor autónomo</span></h2>
+  <p>La misma LoRa32, pero <strong>sin móvil</strong>: se habla con un micro-altavoz
+     Bluetooth (tipo Abbree) emparejado con la placa. Sin app por Bluetooth: el
+     indicativo y el micro se ponen <a href="#configurar">aquí abajo</a>.</p>
+  <esp-web-install-button manifest="manifest-transceptor.json"></esp-web-install-button>
+</div>
+
+<h2 id="configurar">Configurar la placa</h2>
+<p>Con la placa por USB se le puede poner <strong>el indicativo</strong> y, en el
+firmware del transceptor, <strong>elegir el micro Bluetooth</strong>. Sirve
+también para una placa ya grabada: no borra nada.</p>
+
+<div class="placa cfg">
+  <div class="fila">
+    <button id="b-conectar">Conectar con la placa</button>
+    <span class="estado" id="cfg-estado">sin conectar</span>
+  </div>
+
+  <h2 style="margin-top:1rem">Indicativo</h2>
+  <div class="fila">
+    <input id="i-indicativo" maxlength="12" placeholder="EA1ABC" disabled>
+    <button id="b-indicativo" disabled>Guardar</button>
+  </div>
+
+  <h2 style="margin-top:1rem">Micro Bluetooth <span style="opacity:.6">(firmware transceptor)</span></h2>
+  <p>Pon el micro en <strong>modo emparejar</strong> (un Abbree recién sacado
+  de la caja entra solo; si ya estuvo con un móvil, bórralo antes allí) y pulsa
+  Buscar. Tarda 10 segundos.</p>
+  <div class="fila">
+    <button id="b-buscar" disabled>Buscar micros</button>
+    <button id="b-olvidar" disabled>Olvidar el micro</button>
+  </div>
+  <ul id="micros"></ul>
+  <p style="font-size:.9rem"><strong>Sin ordenador:</strong> pulsa
+  <strong>RST dos veces seguidas</strong> (la segunda antes de 3 s). La placa
+  pone «EMPAREJAR MICRO BT», busca durante 30 s y se queda con el micro en
+  modo emparejar que oiga más fuerte.</p>
+
+  <details><summary>Registro</summary><pre id="registro"></pre></details>
+</div>
+
 <h2>Y después: la app</h2>
 <p>Con la placa grabada ya sólo falta el móvil. <strong>No hay que compilar
 nada</strong>:</p>
@@ -124,6 +183,186 @@ esto es para radioaficionados con licencia.</p>
       '(Firefox, Safari y cualquier navegador de móvil quedan fuera), o usa el ' +
       'flasheo con PlatformIO o <code>esptool</code> que está en el README.';
   }
+</script>
+
+<script>
+/* CONFIGURAR POR WEBSERIAL. La placa habla KISS por el USB, igual que con la
+   app, y por el cable no pide el codigo de acceso. Ordenes que se usan:
+     0x05 CMD_ESTADO  -> EV_ESTADO "v1.52(...) INDICATIVO ... canal=N saltos=N ..."
+     0x04 CMD_CONFIG  [canal][saltos][indicativo]  (canal y saltos se reenvian
+                      tal cual estaban: aqui solo se cambia el indicativo)
+     0x1A CMD_AUDIO   5 buscar · 6 conectar [mac:6] · 7 olvidar
+   Las respuestas llegan como EV_LOG (0x8F); la busqueda, en lineas
+   "micros: MAC|dBm|nombre" y "micros: fin N". */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const FEND = 0xC0, FESC = 0xDB, TFEND = 0xDC, TFESC = 0xDD;
+  let puerto = null, escritor = null, lectorActual = null, est = null, encontrados = [];
+
+  if (!('serial' in navigator)) {
+    $('b-conectar').disabled = true;
+    $('cfg-estado').textContent = 'este navegador no tiene WebSerial';
+    return;
+  }
+
+  function apunta(t) {
+    const r = $('registro');
+    r.textContent += t + '\n';
+    r.scrollTop = r.scrollHeight;
+  }
+
+  function habilita(si) {
+    for (const id of ['i-indicativo', 'b-indicativo', 'b-buscar', 'b-olvidar']) $(id).disabled = !si;
+  }
+
+  async function manda(tipo, datos = []) {
+    if (!escritor) return;
+    const o = [FEND, tipo];
+    for (const b of datos) {
+      if (b === FEND) o.push(FESC, TFEND);
+      else if (b === FESC) o.push(FESC, TFESC);
+      else o.push(b);
+    }
+    o.push(FEND);
+    await escritor.write(new Uint8Array(o));
+  }
+
+  function trama(t) {
+    if (!t.length) return;
+    const tipo = t[0];
+    if (tipo !== 0x85 && tipo !== 0x8F) return;
+    const txt = new TextDecoder().decode(t.slice(1));
+    if (tipo === 0x85) return estado(txt);
+    apunta(txt);
+    if (txt.startsWith('micros: fin')) return finBusqueda();
+    if (txt.startsWith('micros: ')) {
+      const c = txt.slice(8).split('|');
+      if (c.length >= 3) encontrados.push({ mac: c[0], dbm: +c[1], nombre: c.slice(2).join('|') });
+      return;
+    }
+    if (/^micro: (SLC|audio)/.test(txt) || txt.startsWith('emparejado con'))
+      $('cfg-estado').textContent = txt;
+    if (/^v\d/.test(txt)) estado(txt);
+  }
+
+  function estado(txt) {
+    const m = txt.match(/^v(\S+?)\(.*?\) (\S+) .*?canal=(\d+) saltos=(\d+)/);
+    if (!m) return;
+    est = { version: m[1], indicativo: m[2], canal: +m[3], saltos: +m[4] };
+    $('cfg-estado').textContent = 'conectado · firmware v' + est.version + ' · ' + est.indicativo;
+    if (document.activeElement !== $('i-indicativo'))
+      $('i-indicativo').value = est.indicativo === 'NOCALL' ? '' : est.indicativo;
+    habilita(true);
+  }
+
+  function finBusqueda() {
+    $('b-buscar').disabled = false;
+    $('b-buscar').textContent = 'Buscar micros';
+    const ul = $('micros');
+    ul.innerHTML = '';
+    if (!encontrados.length) {
+      ul.innerHTML = '<li>No aparece ninguno. ¿Está en modo emparejar?</li>';
+      return;
+    }
+    for (const m of encontrados) {
+      const li = document.createElement('li');
+      const t = document.createElement('span');
+      t.innerHTML = '<strong></strong> <small></small>';
+      t.querySelector('strong').textContent = m.nombre || '(sin nombre)';
+      t.querySelector('small').textContent = m.mac + ' · ' + m.dbm + ' dBm';
+      const b = document.createElement('button');
+      b.textContent = 'Usar este';
+      b.onclick = async () => {
+        const mac = m.mac.split(':').map((h) => parseInt(h, 16));
+        await manda(0x1A, [6, ...mac]);
+        $('cfg-estado').textContent = 'conectando con ' + (m.nombre || m.mac) + '…';
+        ul.innerHTML = '';
+      };
+      li.append(t, b);
+      ul.append(li);
+    }
+  }
+
+  async function lee() {
+    let dentro = false, esc = false, buf = [];
+    while (puerto && puerto.readable) {
+      const lector = puerto.readable.getReader();
+      lectorActual = lector;
+      try {
+        for (;;) {
+          const { value, done } = await lector.read();
+          if (done) break;
+          for (const v of value) {
+            if (v === FEND) { if (dentro && buf.length) trama(Uint8Array.from(buf)); buf = []; dentro = true; esc = false; }
+            else if (!dentro) {}
+            else if (esc) { buf.push(v === TFEND ? FEND : v === TFESC ? FESC : v); esc = false; }
+            else if (v === FESC) esc = true;
+            else buf.push(v);
+          }
+        }
+      } catch (e) {
+        apunta('lectura: ' + e.message);
+      } finally {
+        lector.releaseLock();
+      }
+      break;
+    }
+    $('cfg-estado').textContent = 'desconectada';
+    $('b-conectar').textContent = 'Conectar con la placa';
+    habilita(false);
+    try { escritor && escritor.releaseLock(); } catch (e) {}
+    try { puerto && await puerto.close(); } catch (e) {}
+    puerto = null; escritor = null; lectorActual = null; est = null;
+  }
+
+  $('b-conectar').onclick = async () => {
+    if (puerto) { try { await lectorActual.cancel(); } catch (e) {} return; }
+    try {
+      puerto = await navigator.serial.requestPort();
+      await puerto.open({ baudRate: 115200 });
+      /* DTR y RTS abajo: en estas placas son el autoreset. */
+      try { await puerto.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
+      escritor = puerto.writable.getWriter();
+      $('b-conectar').textContent = 'Desconectar';
+      $('cfg-estado').textContent = 'conectada, preguntando…';
+      lee();
+      /* Si la placa se ha reiniciado al abrir el puerto tarda unos segundos en
+         contestar: se pregunta varias veces hasta que lo haga. */
+      for (let i = 0; i < 8 && !est && puerto; i++) {
+        await manda(0x05);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      if (!est && puerto) $('cfg-estado').textContent = 'la placa no contesta (¿tiene el firmware de PTT LoRa?)';
+    } catch (e) {
+      apunta('conectar: ' + e.message);
+      $('cfg-estado').textContent = 'no se pudo conectar';
+      puerto = null;
+    }
+  };
+
+  $('b-indicativo').onclick = async () => {
+    const ind = $('i-indicativo').value.trim().toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9\/-]{2,11}$/.test(ind)) { alert('Indicativo no válido'); return; }
+    if (!est) return;
+    await manda(0x04, [est.canal, est.saltos, ...new TextEncoder().encode(ind)]);
+    apunta('indicativo enviado: ' + ind);
+  };
+
+  $('b-buscar').onclick = async () => {
+    encontrados = [];
+    $('micros').innerHTML = '';
+    $('b-buscar').disabled = true;
+    $('b-buscar').textContent = 'Buscando… (10 s)';
+    await manda(0x1A, [5]);
+    setTimeout(() => { if ($('b-buscar').disabled) finBusqueda(); }, 16000);
+  };
+
+  $('b-olvidar').onclick = async () => {
+    if (!confirm('¿Olvidar el micro emparejado?')) return;
+    await manda(0x1A, [7]);
+    $('micros').innerHTML = '';
+  };
+})();
 </script>
 </body>
 </html>

@@ -38,8 +38,15 @@ bool hfp_listo();                                      // hay audio en los dos s
 uint8_t     hfp_fase();
 const char *hfp_nombre();                       // del micro, o "" si no se sabe
 
-/* Órdenes. */
-void hfp_buscar();
+/* Órdenes. `autoconecta`: al acabar la búsqueda se engancha SOLO al micro de
+   audio con más señal (el doble reset). Sin él, sólo lista lo encontrado en
+   líneas `micros: MAC|dBm|nombre` + `micros: fin N`, que la app lee para que
+   el usuario elija. */
+void hfp_buscar(bool autoconecta = false);
 bool hfp_conecta(const uint8_t mac[6]);
 void hfp_olvida();
 void hfp_estado(char *s, size_t cap);
+
+/* Mientras se empareja, lo que enseña la pantalla (dos líneas). false = nada
+   que enseñar. */
+bool hfp_emparejando(char *l1, char *l2, size_t cap);

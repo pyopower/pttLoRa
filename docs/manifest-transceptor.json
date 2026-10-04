@@ -1,0 +1,16 @@
+{
+  "name": "PTT LoRa transceptor (lora32 + micro Bluetooth)",
+  "version": "1.52",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/transceptor/bootloader.bin",       "offset": 4096 },
+        { "path": "firmware/transceptor/partitions.bin",       "offset": 32768 },
+        { "path": "firmware/transceptor/ota_data_initial.bin", "offset": 57344 },
+        { "path": "firmware/transceptor/firmware.bin",         "offset": 65536 }
+      ]
+    }
+  ]
+}

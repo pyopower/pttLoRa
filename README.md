@@ -1,28 +1,56 @@
 # PTT LoRa
 
-**Voz por LoRa en una red inspirada de manera simplificada en Tetra.** Una placa LoRa
-de unos 20-30 € y tu móvil o POC Android que hace de interface.Opcionalmente también envía tu posicion a aprs-fi.
+**Un walkie digital por LoRa, sin móvil: una placa de unos 25 € y un
+micro-altavoz Bluetooth.** Aprietas el PTT del micro, hablas, y tu voz sale
+codificada en Codec2 por la radio de la placa. La pantalla de la placa hace de
+S-metro y te dice quién habla. Sin app, sin cobertura y sin internet.
+
+```
+   🎙️ micro Bluetooth ))) ── placa LoRa ────RF────► placa LoRa ── ((( 🎙️
+      (PTT + altavoz)       (Codec2 dentro)
+```
+
+Ese es el **transceptor autónomo**, el producto estrella del proyecto. Por
+debajo hay una **red inspirada de manera simplificada en Tetra**, y el
+transceptor es un terminal más de esa red: habla con los que usan el móvil, con
+las celdas y, a través de ellas, con otras zonas por internet.
 
 **La cobertura crece añadiendo placas.** Cada celda que pones —la misma placa,
-en alto— extiende la red, y se encadenan por radio o por internet (opcionalmente cuándo una celda no escucha otra) . El límite no
-es la potencia, la red crece exponencialmente interconectandose entre si.
+en alto— extiende la red, y se encadenan por radio o por internet (opcionalmente
+cuando una celda no escucha a otra). El límite no es la potencia: la red crece
+interconectándose.
 
-Está desarrollado para **radioaficionados con licencia**: funciona en la banda de 70 cm, sin cifrar, y cada estación
-se identifica con su indicativo.
+**¿Prefieres el móvil?** También vale: la misma placa con tu móvil o POC Android
+como interfaz, que además manda tu posición a aprs.fi.
 
-**Está funcionando, no es una idea.** Voz real entre móviles (hace solo de interface) a través de LoRa, y **3,2 km sin visión directa con 50 mW y la antena de fábrica**, sin
-perder un solo paquete en las pruebas.
+Está desarrollado para **radioaficionados con licencia**: funciona en la banda
+de 70 cm, sin cifrar, y cada estación se identifica con su indicativo.
+
+**Está funcionando, no es una idea.** Voz real a través de LoRa, y **3,2 km sin
+visión directa con 50 mW y la antena de fábrica**, sin perder un solo paquete en
+las pruebas. El transceptor autónomo ya pasa voz en los dos sentidos con un
+micro Abbree (micro → placa → LoRa → celda → reflector → app, y al revés).
+Está en rodaje en la rama `transceptor`:
+[estado y detalles](firmware/TRANSCEPTOR.md).
 
 ---
 
 # Empezar
 
-**Dos pasos. Diez minutos.**
+**Dos caminos. Elige uno, o los dos: hablan entre sí.**
+
+| | ⭐ **Transceptor autónomo** | **Con el móvil** |
+|---|---|---|
+| Qué llevas | placa + micro-altavoz Bluetooth | placa + móvil Android |
+| Con qué hablas | el PTT del micro | la app |
+| Placa | LilyGO LoRa32 v2.1 | LoRa32 v2.1 o T-Beam v1.2 |
+| Firmware | `transceptor` | `lora32` / `tbeam` |
+| Se configura | desde la web, por USB | desde la app |
 
 ###  👉· La placa
 
 Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, ojo, elige siempre la **versión de 433 MHz**
-(ESP32 + SX1278).
+(ESP32 + SX1278). Para el transceptor autónomo, la **LoRa32**.
 
 | <a href="https://a.aliexpress.com/_ExGKbhC"><img src="docs/img/lora32.jpg" width="260" alt="LilyGO LoRa32 v2.1"></a> | <a href="https://a.aliexpress.com/_EI7hfvo"><img src="docs/img/tbeam.jpg" width="260" alt="LilyGO T-Beam v1.2"></a> |
 |:--:|:--:|
@@ -30,13 +58,53 @@ Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, ojo, elige siempre la **versi�
 
 *Fotos del fabricante, orientativas: en la tienda hay que elegir la variante de **433 MHz**.*
 
+---
+
+## ⭐ Camino A · El transceptor autónomo
+
+**Lo que necesitas:** una LoRa32 v2.1 de 433 MHz y un **micro-altavoz
+Bluetooth con PTT** de los que se venden para POC. El probado es un Abbree,
+que se anuncia como `KST_vHMIC010`.
+
+**1 · Graba el firmware.** En 👉 **https://pyopower.github.io/pttLoRa/**,
+pulsa **«LoRa32 v2.1 · transceptor autónomo»** con la placa por USB.
+
+**2 · Ponle tu indicativo.** En la misma página, en **«Configurar la placa»**:
+Conectar, escribes el indicativo y Guardar.
+
+**3 · Empareja el micro.** El micro tiene que estar en **modo emparejar**: un
+Abbree nuevo entra solo; si ya estuvo con un móvil, bórralo antes allí. Hay dos
+formas:
+
+- **Desde la web**: pulsa **Buscar micros**, espera 10 s y toca
+  **«Usar este»** en el tuyo.
+- **Sin ordenador**: pulsa **RST dos veces seguidas** (la segunda antes de
+  3 s). La pantalla pone «EMPAREJAR MICRO BT», busca durante 30 s y se queda
+  con el micro que oiga más fuerte.
+
+Ya está: la placa recuerda el micro y **se reconecta sola** cada vez que lo
+enciendes. Aprietas el PTT del micro y hablas.
+
+> **Lo que conviene saber:**
+> - La pantalla es un **S-metro de aguja**: RX/TX, quién habla, la frecuencia,
+>   la señal y la potencia. El icono de Bluetooth queda **fijo** con el micro
+>   enganchado y **parpadea** mientras lo busca.
+> - **Sin app por Bluetooth**: el Bluetooth de la placa es del micro. Lo demás
+>   (radio, canal, perfil) se ajusta por USB con `tools/nodo.py`.
+> - El WiFi va **apagado**: comparte antena con el Bluetooth y le roba audio.
+> - Solo hay entorno para la **LoRa32**; la T-Beam todavía no.
+
+---
+
+## Camino B · Con el móvil
+
 ### 1 · Grábale el firmware
 
 👉 **https://pyopower.github.io/pttLoRa/** — desde el navegador, sin instalar
 nada. Conectas la placa por USB, pulsas el botón de tu modelo y listo.
 
 > Hace falta **Chrome o Edge en un ordenador**: es el navegador quien habla con
-> el puerto serie, y Firefox, Safari y los navegadores de móvil no lo hacen.
+> el puerto serie, y Firefox y Safari no lo hacen.
 > ¿Prefieres a mano? [Binarios sueltos](https://github.com/pyopower/pttLoRa/releases/latest)
 > y las órdenes de `esptool` más abajo.
 
@@ -78,6 +146,13 @@ más fácil de cometer.
 |---|---|---|---|
 | **LilyGO LoRa32 v2.1** (T3 v1.6.1) | ESP32 + SX1278 | pantalla OLED | `lora32` |
 | **LilyGO T-Beam v1.2** | ESP32 + SX1278 | pantalla, **GPS**, portapilas 18650 | `tbeam` |
+| **LilyGO LoRa32 v2.1** + micro BT | ESP32 + SX1278 | el **transceptor autónomo** | `transceptor` |
+
+**El micro del transceptor autónomo**: un micro-altavoz Bluetooth con PTT de
+los de POC. La placa hace de "teléfono" (manos libres HFP, audio CVSD a 8 kHz,
+que es justo lo que come Codec2) y recibe el PTT por AVRCP: el Abbree manda
+«avance rápido» al pulsar y «rebobinar» al soltar. Un auricular Bluetooth
+cualquiera también sirve; como no tiene PTT, se usan los botones de volumen.
 
 **Las dos hacen exactamente lo mismo y los tres papeles**: celda, nodo o suelta.
 Es el mismo firmware y se elige desde la app, así que ninguna es "la de llevar"
@@ -134,8 +209,10 @@ Cuidado al elegir otros tipos/modelos no todos sirven para LoRa y transmisiones 
      ┌──┴───┐  ┌──┴───┐              ┌───┴──┐   no repiten: donde
      │ nodo │  │ nodo │              │ nodo │   hay celda no hace
      └──┬───┘  └──┬───┘              └───┬──┘   falta
-    BLE │    WiFi │                      │
-       📱        📱                     📱      hablas desde aquí
+    BLE │    WiFi │                   BT │
+       📱        📱                     🎙️      hablas desde aquí:
+                                   transceptor   móvil o micro BT
+                                    autónomo
 ```
 
 **Tres papeles, un solo firmware, y la placa elige sola:**
@@ -143,7 +220,8 @@ Cuidado al elegir otros tipos/modelos no todos sirven para LoRa y transmisiones 
 - **Celda** — la pones en alto, con corriente y buena antena. Repite todo lo que
   oye, y es la que convierte tres placas sueltas en una red que cubre un valle.
   Si tiene internet, además une tu zona con otras por un reflector.
-- **Nodo** — la que llevas encima. Habla con tu móvil por Bluetooth o WiFi y se
+- **Nodo** — la que llevas encima. Habla con tu móvil por Bluetooth o WiFi, o
+  directamente con tu micro Bluetooth si es un **transceptor autónomo**, y se
   calla cuando hay una celda a la vista, para no estorbar.
 - **Suelto** — sin ninguna celda cerca, dos placas en el campo **ya hacen red**
   ellas solas y se repiten la una a la otra. No hay nada que configurar.
@@ -249,7 +327,12 @@ Con **PlatformIO** (compila y flashea de una vez):
 ```bash
 cd firmware
 pio run -e lora32 -t upload        # o -e tbeam
+pio run -e transceptor -t upload   # el transceptor autónomo (LoRa32 + micro BT)
 ```
+
+El `transceptor` compila Arduino como componente de ESP-IDF (necesita el
+Bluetooth Classic con audio SCO, que el Arduino precompilado no trae). Los
+detalles están en [firmware/TRANSCEPTOR.md](firmware/TRANSCEPTOR.md).
 
 O con **esptool**, usando los binarios ya compilados —los de `docs/firmware/`, o
 los del [último *release*](https://github.com/pyopower/pttLoRa/releases/latest):

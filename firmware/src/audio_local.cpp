@@ -715,7 +715,7 @@ void audio_estado(char *s, size_t cap)
 /* CMD_AUDIO. [sub][...]:
  *   0 estado · 1 prueba [veces] · 2 banco [segundos] [nucleo] · 3 parar
  *   4 baliza [periodo_s] [minutos] (periodo 0 = apagar)
- *   5 bt buscar · 6 bt conecta [mac:6] · 7 bt olvida
+ *   5 bt buscar (lista `micros: ...`) · 6 bt conecta [mac:6] · 7 bt olvida
  *   8 ptt (conmuta, como un botón más) · 9 boton [0 pantalla|1 pulsador|2 conmutador]
  *   10 wifi [0|1] (lo atiende main.cpp, que es quien enciende y apaga el WiFi)
  * Se llama desde loop(). */

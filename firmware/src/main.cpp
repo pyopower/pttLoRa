@@ -1950,6 +1950,23 @@ static void pinta()
     }
 
 #ifdef AUDIO_BT
+    /* Emparejando el micro (doble reset o desde la app): igual que el codigo,
+       es el momento de mirar la pantalla y no enseña otra cosa. */
+    char l1[24], l2[24];
+    if (hfp_emparejando(l1, l2, sizeof l1)) {
+        oled.setTextSize(1);
+        oled.setTextColor(SSD1306_WHITE);
+        oled.setCursor(0, 0);
+        oled.print("EMPAREJAR MICRO BT");
+        oled.setCursor(0, 24);
+        oled.print(l1);
+        oled.setCursor(0, 40);
+        oled.print(l2);
+        oled.display();
+        redibujar = false;
+        t_pantalla = millis();
+        return;
+    }
     pinta_transceptor();
     return;
 #endif

@@ -71,6 +71,42 @@ static const float G_ALTAVOZ = 1.8f;
 
 static uint32_t heap_antes = 0, heap_pila = 0;
 
+/* EMPAREJAR SIN CONSOLA. La búsqueda apunta aquí los aparatos de AUDIO que
+   ve (desde la tarea de la pila: por eso el cerrojo) y loop() decide al acabar.
+   Con `emp_auto` (doble reset) se engancha solo al de más señal; si no aparece
+   ninguno, se repite hasta tres veces (30 s) para dar tiempo a poner el micro
+   en modo emparejar. */
+struct Candidato { uint8_t mac[6]; int8_t rssi; char nombre[24]; };
+static Candidato cand[8];
+static volatile uint8_t n_cand = 0;
+static portMUX_TYPE cerrojo_cand = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool buscando = false, fin_busqueda = false;
+static bool emp_auto = false, emp_al_arrancar = false;
+static uint8_t emp_intentos = 0;
+/* Lo que enseña la pantalla: 0 nada · 1 buscando · 2 conectando · 3 no hay. */
+static uint8_t emp_fase = 0;
+static uint32_t emp_t = 0;
+
+static void acaba_busqueda();
+
+static void apunta_candidato(const uint8_t *mac, int rssi, const char *nombre)
+{
+    portENTER_CRITICAL(&cerrojo_cand);
+    int i = 0;
+    while (i < n_cand && memcmp(cand[i].mac, mac, 6)) i++;
+    if (i == n_cand && n_cand < 8) {
+        memcpy(cand[i].mac, mac, 6);
+        cand[i].rssi = -127;
+        cand[i].nombre[0] = 0;
+        n_cand++;
+    }
+    if (i < n_cand) {
+        if (rssi && rssi > cand[i].rssi) cand[i].rssi = rssi;
+        if (nombre[0]) snprintf(cand[i].nombre, sizeof cand[i].nombre, "%s", nombre);
+    }
+    portEXIT_CRITICAL(&cerrojo_cand);
+}
+
 static void mac_txt(const uint8_t *b, char *s)
 {
     snprintf(s, 18, "%02X:%02X:%02X:%02X:%02X:%02X", b[0], b[1], b[2], b[3], b[4], b[5]);
@@ -470,11 +506,18 @@ static void gap(esp_bt_gap_cb_event_t ev, esp_bt_gap_cb_param_t *p)
         char m[18];
         mac_txt(p->disc_res.bda, m);
         audio_dice("  %s %4d dBm  %s%s", m, rssi, nombre[0] ? nombre : "(sin nombre)", audio ? "  <- audio" : "");
+        if (audio) apunta_candidato(p->disc_res.bda, rssi, nombre);
         break;
     }
     case ESP_BT_GAP_DISC_STATE_CHANGED_EVT:
-        audio_dice(p->disc_st_chg.state == ESP_BT_GAP_DISCOVERY_STARTED
-                   ? "buscando micros Bluetooth (10 s)..." : "fin de la busqueda");
+        if (p->disc_st_chg.state == ESP_BT_GAP_DISCOVERY_STARTED) {
+            buscando = true;
+            audio_dice("buscando micros Bluetooth (10 s)...");
+        } else if (buscando) {
+            buscando = false;
+            fin_busqueda = true;
+            audio_dice("fin de la busqueda");
+        }
         break;
     case ESP_BT_GAP_AUTH_CMPL_EVT:
         audio_dice("emparejado con %s: %s", p->auth_cmpl.device_name,
@@ -501,9 +544,32 @@ static void gap(esp_bt_gap_cb_event_t ev, esp_bt_gap_cb_param_t *p)
 }
 
 // ---------------------------------------------------------------- arranque --
+/* EL DOBLE RESET. La LoRa32 V2.1 no tiene más botón que el RST, así que el
+   gesto para emparejar es pulsarlo DOS veces seguidas: al arrancar se deja una
+   marca en la NVS que se borra a los 3 s; si al arrancar la marca sigue ahí, el
+   arranque anterior duró menos de eso. Sólo cuentan los arranques por RST o
+   por encendido: un reinicio por fallo (wdt, panic) no es un gesto de nadie. */
+static uint32_t t_marca = 0;
+static void mira_doble_reset()
+{
+    esp_reset_reason_t r = esp_reset_reason();
+    bool gesto = r == ESP_RST_POWERON || r == ESP_RST_EXT;
+    bool marca = prefs.getBool("rst2", false);
+    if (gesto && marca) {
+        prefs.putBool("rst2", false);
+        emp_al_arrancar = true;
+    } else if (gesto) {
+        prefs.putBool("rst2", true);
+        t_marca = millis() | 1;
+    } else if (marca) {
+        prefs.putBool("rst2", false);
+    }
+}
+
 bool hfp_arranca()
 {
     prefs.begin("hfp", false);
+    mira_doble_reset();
     hay_par = prefs.getBytes("par", par, 6) == 6;
     prefs.getString("nom", nombre_par, sizeof nombre_par);
     ptt_propio = prefs.getBool("pttp", false);
@@ -560,7 +626,12 @@ bool hfp_arranca()
     pila_ok = true;
     heap_pila = heap_antes - ESP.getFreeHeap();
 
-    if (hay_par) {
+    if (emp_al_arrancar) {
+        /* Doble reset: ni se intenta el micro de antes (su llamada ocuparía la
+           radio justo cuando hay que buscar). */
+        audio_dice("micro: DOBLE RESET -> modo emparejar (pon el micro a emparejar)");
+        hfp_buscar(true);
+    } else if (hay_par) {
         char m[18];
         mac_txt(par, m);
         audio_dice("micro: Bluetooth Classic listo (%u B), buscando a %s %s", (unsigned)heap_pila, m, nombre_par);
@@ -592,13 +663,25 @@ void hfp_atiende()
         b_alt0 = bytes_alt; b_mic0 = bytes_mic; pide0 = n_pide; listo0 = n_listo; cero0 = n_pide_cero;
         hue0 = huecos_alt; vac0 = mic_vacios; blq0 = mic_bloques;
     }
+    if (t_marca && millis() - t_marca > 3000) { t_marca = 0; prefs.putBool("rst2", false); }
+    if (fin_busqueda) { fin_busqueda = false; acaba_busqueda(); }
+    if (emp_fase == 2 && (slc || millis() - emp_t > 20000)) {
+        if (!slc) { emp_fase = 3; emp_t = millis(); audio_dice("micro: no ha contestado"); }
+        else emp_fase = 0;
+        audio_despierta();
+    }
+    if (emp_fase == 3 && millis() - emp_t > 5000) { emp_fase = 0; audio_despierta(); }
+    if (emp_fase == 1) {                      // la cuenta atrás de la pantalla
+        static uint32_t t_seg = 0;
+        if (millis() - t_seg > 1000) { t_seg = millis(); audio_despierta(); }
+    }
     if (guardar_par) { guardar_par = false; prefs.putBytes("par", par, 6); }
     if (guardar_nombre) { guardar_nombre = false; prefs.putString("nom", nombre_par); }
     if (guardar_propio) { guardar_propio = false; prefs.putBool("pttp", ptt_propio); }
     /* Si el micro no está (apagado, fuera de alcance), se insiste cada 15 s:
        encenderlo tiene que bastar para que el transceptor lo coja. */
     static uint32_t t_reintento = 0;
-    if (!slc && hay_par && millis() - t_reintento > 15000) {
+    if (!slc && hay_par && !buscando && !emp_fase && millis() - t_reintento > 15000) {
         t_reintento = millis();
         esp_bt_hf_connect(par);
     }
@@ -629,10 +712,83 @@ void hfp_atiende()
 }
 
 // ----------------------------------------------------------------- órdenes --
-void hfp_buscar()
+static void empieza_busqueda()
+{
+    portENTER_CRITICAL(&cerrojo_cand);
+    n_cand = 0;
+    portEXIT_CRITICAL(&cerrojo_cand);
+    emp_t = millis();
+    if (esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 8, 0) != ESP_OK) {
+        audio_dice("micro: no se pudo empezar a buscar");
+        emp_fase = 0;
+    }
+}
+
+void hfp_buscar(bool autoconecta)
 {
     if (!pila_ok) { audio_dice("micro: no hay Bluetooth"); return; }
-    esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 8, 0);
+    if (buscando) { audio_dice("micro: ya estoy buscando"); return; }
+    emp_auto = autoconecta;
+    emp_intentos = 0;
+    emp_fase = 1;
+    audio_despierta();
+    empieza_busqueda();
+}
+
+/* Al acabar cada vuelta de 10 s. La lista sale SIEMPRE en líneas fijas —la app
+   las lee para que el usuario elija—, de más a menos señal. */
+static void acaba_busqueda()
+{
+    Candidato c[8];
+    portENTER_CRITICAL(&cerrojo_cand);
+    uint8_t n = n_cand;
+    memcpy(c, cand, sizeof c);
+    portEXIT_CRITICAL(&cerrojo_cand);
+    for (int i = 1; i < n; i++)
+        for (int j = i; j > 0 && c[j].rssi > c[j - 1].rssi; j--) { Candidato t = c[j]; c[j] = c[j - 1]; c[j - 1] = t; }
+    for (int i = 0; i < n; i++) {
+        char m[18];
+        mac_txt(c[i].mac, m);
+        audio_dice("micros: %s|%d|%s", m, c[i].rssi, c[i].nombre);
+    }
+    audio_dice("micros: fin %u", (unsigned)n);
+    if (!emp_auto) { emp_fase = 0; audio_despierta(); return; }
+    if (n == 0) {
+        if (++emp_intentos < 3) { empieza_busqueda(); return; }
+        emp_fase = 3;
+        emp_t = millis();
+        audio_dice("micro: no aparece ninguno en modo emparejar");
+        audio_despierta();
+        return;
+    }
+    hfp_conecta(c[0].mac);
+    snprintf(nombre_par, sizeof nombre_par, "%s", c[0].nombre);
+    guardar_nombre = true;
+    emp_fase = 2;
+    emp_t = millis();
+    audio_despierta();
+}
+
+bool hfp_emparejando(char *l1, char *l2, size_t cap)
+{
+    switch (emp_fase) {
+    case 1: {
+        int queda = 10 * (emp_auto ? 3 - emp_intentos : 1) - (int)((millis() - emp_t) / 1000);
+        snprintf(l1, cap, "Buscando micro %ds", queda < 0 ? 0 : queda);
+        snprintf(l2, cap, "%s", emp_auto ? "ponlo a emparejar" : "(desde la app)");
+        return true;
+    }
+    case 2:
+        snprintf(l1, cap, "Conectando con");
+        snprintf(l2, cap, "%s", nombre_par[0] ? nombre_par : "el micro");
+        return true;
+    case 3:
+        snprintf(l1, cap, "No encontrado");
+        snprintf(l2, cap, "doble RST: repetir");
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool hfp_conecta(const uint8_t mac[6])

@@ -1,17 +1,19 @@
-# El transceptor autónomo (rama `transceptor`, en obras)
+# El transceptor autónomo (rama `transceptor`, en rodaje)
 
 La placa LoRa SOLA, sin móvil ni app: micro-altavoz Bluetooth con PTT
 (manos libres HFP), Codec2 dentro del ESP32 y la voz por el SX1278. La OLED es
 el único instrumento.
 
-Esta rama es **preliminar**: lo que hay funciona en banco y en el aire, pero
-todavía en piezas sueltas. Se publica para poder trabajar sobre ella.
+Es el **producto estrella** del proyecto (ver el README, «Camino A»). La rama
+está en rodaje: funciona en el aire en los dos sentidos con un micro Abbree,
+pero aún quedan cosas abiertas (ver
+«Siguiente» más abajo).
 
 ## Qué hay
 
 | Dónde | Qué es | Estado |
 |---|---|---|
-| `firmware/` (`pio run -e transceptor`) | **El transceptor dentro del firmware principal**: malla, balizas, NVS y órdenes por USB, más el micro Bluetooth (`src/audio_bt.*`) como fuente y sumidero de `audio_local`, y el PTT separado de su origen (`src/ptt.*`) | 🟡 **Probado con un micro Abbree/KST_vHMIC010**: el audio ya pasa en los dos sentidos. Pendiente: la OLED se queda a oscuras (ver más abajo) |
+| `firmware/` (`pio run -e transceptor`) | **El transceptor dentro del firmware principal**: malla, balizas, NVS y órdenes por USB, más el micro Bluetooth (`src/audio_bt.*`) como fuente y sumidero de `audio_local`, y el PTT separado de su origen (`src/ptt.*`) | 🟢 **Probado con un micro Abbree/KST_vHMIC010**: voz en los dos sentidos, PTT por AVRCP, pantalla OK. Emparejar por **doble RST validado** (4-oct); la sección web aún sin probar en un navegador |
 | `bench/hfp-ag/` (`pio run -e transceptor`) | **Transceptor v0**: firmware aparte, HFP-AG + Codec2 1200 + LoRa + pantalla | ✅ Probado en el aire en los dos sentidos (micro JBL GO ↔ celda ↔ reflector ↔ app), sin WiFi |
 | `bench/hfp-ag/` (`pio run -e hfpag`) | Lo mismo pero la voz va por WiFi al reflector | Funciona, pero el WiFi y el audio Bluetooth se pisan (se pierde ~10 % del micro): queda como demostración |
 | `firmware/src/audio_local.*` (`pio run -e lora32-audio`) | Codec2 DENTRO del firmware principal, como un tubo más (`T_LOCAL`), con el mismo arbitraje de PTT, TOT y eco que la app | ✅ Baliza hablada codificada en la placa y oída en la app |
@@ -47,12 +49,26 @@ botón PRG / pulsador / botones del micro / consola ──► ptt ──► audi
 - **Registro de ESP-IDF solo en ERROR**: va por la misma UART que el KISS.
 - La pantalla es un **S-metro de aguja como el de un CB** (`pinta_transceptor`): arriba RX/TX en inverso, quién habla y la frecuencia; abajo un instrumento de doble escala (S1-S9/+20/+40 con S9 = −93 dBm, y la potencia en mW) con la aguja con inercia. Solo queda además un icono de Bluetooth: fijo con el micro enganchado, parpadeando si el emparejado no está, y nada si no hay ninguno. En la esquina contraria, el papel en la red con el mismo criterio con el que el nodo decide si repite (`hay_a_quien_repetir`): una torre si hay celda (y la placa se calla), una R en negativo si repite ella como digipeater, y nada si está sola. En reposo, en el sitio de RX/TX, la pila rellena según la carga (o un rayo por USB sin pila) y el último indicativo si cabe entero. Se refresca cada 100 ms mientras se mueve.
 
+**Emparejar el micro sin consola** (4-oct-2026):
+
+- **Doble RST**: pulsar RST dos veces seguidas (la segunda antes de 3 s). La
+  pantalla pone «EMPAREJAR MICRO BT», busca hasta 3 × 10 s y se engancha al
+  aparato de audio en modo emparejar con más señal. Lo detecta una marca en la
+  NVS (`hfp/rst2`) que se borra a los 3 s de arrancar; sólo cuentan arranques
+  por encendido/RST, no los reinicios por fallo. ⚠️ Abrir el puerto serie dos
+  veces seguidas con un programa que mueva RTS también reinicia la placa y
+  puede contar como doble RST.
+- **Web** (`docs/index.html`, sección «Configurar la placa»): WebSerial por el
+  USB → indicativo (CMD_CONFIG reenviando canal y saltos del estado) y lista de
+  micros encontrados para elegir uno. La búsqueda escribe en el registro
+  `micros: MAC|dBm|nombre` (de más a menos señal) y `micros: fin N`.
+
 Órdenes (`tools/nodo.py`):
 
 | Orden | Qué hace |
 |---|---|
 | `audio` | Estado: PTT, códec, colchón, heap y bloque libre, y el micro Bluetooth |
-| `audio bt buscar` | 10 s buscando micros (el micro, en modo emparejar) |
+| `audio bt buscar` | 10 s buscando micros (el micro, en modo emparejar); lista `micros: MAC\|dBm\|nombre` |
 | `audio bt conecta AA:BB:CC:DD:EE:FF` | Lo vincula. Se recuerda en NVS y se reconecta solo cada 15 s |
 | `audio bt olvida` | Lo desvincula |
 | `audio ptt` | Abre o cierra el micro como un botón más. **EMITE** |
