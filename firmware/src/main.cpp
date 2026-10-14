@@ -2002,23 +2002,41 @@ static void pinta()
     if (transmitiendo)       oled.print("TX");
     else if (canal_ocupado)  oled.print("RX");
     else                     oled.print("--");
+    /* AL LADO DEL TX/RX GRANDE, DOS FILAS (x=34): quien cuelga del nodo y su
+     * papel. Antes el papel iba en x=0 de la fila 24 —debajo del TX/RX, que
+     * baja hasta la 29— y «REPETIDOR» (54 px) se pisaba con «puente USB», que
+     * empieza en la 34. El «libre/ocupado/transmitiendo» que habia aqui repetia
+     * lo que ya dice el TX/RX/-- en grande. Paso en celdaC31VC (14-oct-2026). */
     oled.setTextSize(1);
     oled.setCursor(34, 14);
-    oled.print(transmitiendo ? "transmitiendo"
-                             : (canal_ocupado ? "ocupado" : "libre"));
-    oled.setCursor(34, 24);
     {
         uint8_t cl = cuenta_clientes();
         if (cl) { oled.print(cl); oled.print(" x wifi"); }
         else oled.print(bt_conectado ? "movil BLE" :
                         (hay_anfitrion ? "puente USB" : (bt_activo ? "nodo" : "BT off")));
     }
-    oled.setCursor(0, 24);
+    oled.setCursor(34, 24);
     oled.print(perfil == PERFIL_FIJO ? "REPETIDOR" :
-               (perfil == PERFIL_SOLO ? "solo yo" : "auto"));
-    if (perfil == PERFIL_AUTO && cuenta_vecinos(0) == 0) {
-        oled.setCursor(96, 24);
-        oled.print("solo");            // nadie a la vista: no repite
+               (perfil == PERFIL_SOLO ? "solo yo" :
+                (cuenta_vecinos(0) == 0 ? "auto solo" : "auto")));   // solo = nadie a la vista: no repite
+    {
+        /* Banderas a la derecha de la misma fila: WiFi (wf/AP) y enlaces en
+           pie (E1). Lo mas largo es «wf E1», 5 caracteres desde x=98; el
+           papel mas largo acaba en x=88. */
+        char f[12] = "";
+        if (wifi_activo) strcat(f, red_modo == RED_AP ? "AP" : "wf");
+        uint8_t enl = 0;
+        for (int i = T_ENL0; i < T_ENLN; i++)
+            if (tubos[i].clase == TUBO_ENLACE) enl++;
+        if (enl) {
+            char e[6];
+            snprintf(e, sizeof e, "%sE%u", f[0] ? " " : "", (unsigned)enl);
+            strcat(f, e);
+        }
+        if (f[0]) {
+            oled.setCursor(128 - 6 * strlen(f), 24);
+            oled.print(f);
+        }
     }
 
     oled.setCursor(0, 34);
@@ -2038,10 +2056,6 @@ static void pinta()
 
     oled.setCursor(0, 46);
     oled.printf("%.3f sf%u %udBm", frecuencia, (unsigned)sf, potencia);
-    if (wifi_activo) {
-        oled.setCursor(110, 24);
-        oled.print(red_modo == RED_AP ? "AP" : "wf");
-    }
     /* LA SEÑAL WiFi, EN LA PANTALLA.
      *
      * En un nodo instalado en alto la pregunta no es si el WiFi "va", es si va
@@ -2049,7 +2063,13 @@ static void pinta()
      * una placa sin Bluetooth **la pantalla es el unico instrumento que queda**
      * — no hay app a la que preguntarle desde alli arriba. Asi que el dato se
      * pone donde se puede leer subiendo una vez, con la placa en la mano. */
-    if (wifi_activo && red_modo == RED_CLIENTE) {
+    /* La ultima fila es de los contadores, y con WiFi cliente se la turnan
+     * cada 4 s: antes se escribian los dos encima. Si el WiFi no esta
+     * conectado, manda el WiFi (es lo que hay que arreglar). */
+    bool fila_wifi = false;
+    if (wifi_activo && red_modo == RED_CLIENTE)
+        fila_wifi = WiFi.status() != WL_CONNECTED || ((millis() / 4000) & 1);
+    if (fila_wifi) {
         oled.setCursor(0, 56);
         if (WiFi.status() == WL_CONNECTED) {
             long q = WiFi.RSSI();
@@ -2063,20 +2083,12 @@ static void pinta()
                        : "sin wifi");
         }
     }
-    {
-        uint8_t enl = 0;
-        for (int i = T_ENL0; i < T_ENLN; i++)
-            if (tubos[i].clase == TUBO_ENLACE) enl++;
-        if (enl) {
-            oled.setCursor(104, 34);
-            oled.print("E");
-            oled.print(enl);              // enlaces en pie
-        }
+    if (!fila_wifi) {
+        oled.setCursor(0, 56);
+        uint8_t vec = cuenta_vecinos(0);
+        oled.printf("rx%lu tx%lu rp%lu v%u %u%%",
+                    n_rx, n_tx, n_repetidas, vec, bateria_pct());
     }
-    oled.setCursor(0, 56);
-    uint8_t vec = cuenta_vecinos(0);
-    oled.printf("rx%lu tx%lu rp%lu v%u %u%%",
-                n_rx, n_tx, n_repetidas, vec, bateria_pct());
 
     oled.display();
     redibujar = false;
