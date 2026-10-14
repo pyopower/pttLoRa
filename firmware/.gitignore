@@ -3,3 +3,5 @@
 lib-audio/
 sdkconfig.transceptor
 sdkconfig.transceptor.old
+sdkconfig.tbeam-transceptor
+sdkconfig.tbeam-transceptor.old

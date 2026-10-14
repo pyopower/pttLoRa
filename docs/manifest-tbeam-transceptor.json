@@ -1,0 +1,16 @@
+{
+  "name": "PTT LoRa transceptor (T-Beam + micro Bluetooth)",
+  "version": "1.52",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/tbeam-transceptor/bootloader.bin",       "offset": 4096 },
+        { "path": "firmware/tbeam-transceptor/partitions.bin",       "offset": 32768 },
+        { "path": "firmware/tbeam-transceptor/ota_data_initial.bin", "offset": 57344 },
+        { "path": "firmware/tbeam-transceptor/firmware.bin",         "offset": 65536 }
+      ]
+    }
+  ]
+}

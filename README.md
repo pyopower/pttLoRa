@@ -44,13 +44,14 @@ Está en rodaje en la rama `transceptor`:
 | Qué llevas | placa + micro-altavoz Bluetooth | placa + móvil Android |
 | Con qué hablas | el PTT del micro | la app |
 | Placa | LilyGO LoRa32 v2.1 | LoRa32 v2.1 o T-Beam v1.2 |
-| Firmware | `transceptor` | `lora32` / `tbeam` |
+| Firmware | `transceptor` / `tbeam-transceptor` | `lora32` / `tbeam` |
 | Se configura | desde la web, por USB | desde la app |
 
 ###  👉· La placa
 
 Una **LilyGO LoRa32 v2.1** o una **T-Beam v1.2**, ojo, elige siempre la **versión de 433 MHz**
-(ESP32 + SX1278). Para el transceptor autónomo, la **LoRa32**.
+(ESP32 + SX1278). Para el transceptor autónomo, la **LoRa32** o la **T-Beam**
+(esta con GPS y batería).
 
 | <a href="https://a.aliexpress.com/_ExGKbhC"><img src="docs/img/lora32.jpg" width="260" alt="LilyGO LoRa32 v2.1"></a> | <a href="https://a.aliexpress.com/_EI7hfvo"><img src="docs/img/tbeam.jpg" width="260" alt="LilyGO T-Beam v1.2"></a> |
 |:--:|:--:|
@@ -77,7 +78,8 @@ Bluetooth con PTT** de los que se venden para POC. El probado es un Abbree,
 que se anuncia como `KST_vHMIC010`.
 
 **1 · Graba el firmware.** En 👉 **https://pyopower.github.io/pttLoRa/**,
-pulsa **«LoRa32 v2.1 · transceptor autónomo»** con la placa por USB.
+pulsa **«LoRa32 v2.1 · transceptor autónomo»** (o «T-Beam v1.2 · transceptor
+autónomo») con la placa por USB.
 
 **2 · Ponle tu indicativo.** En la misma página, en **«Configurar la placa»**:
 Conectar, escribes el indicativo y Guardar.
@@ -160,6 +162,7 @@ más fácil de cometer.
 | **LilyGO LoRa32 v2.1** (T3 v1.6.1) | ESP32 + SX1278 | pantalla OLED | `lora32` |
 | **LilyGO T-Beam v1.2** | ESP32 + SX1278 | pantalla, **GPS**, portapilas 18650 | `tbeam` |
 | **LilyGO LoRa32 v2.1** + micro BT | ESP32 + SX1278 | el **transceptor autónomo** | `transceptor` |
+| **LilyGO T-Beam v1.2** + micro BT | ESP32 + SX1278 + GPS + 18650 | el **transceptor autónomo** con batería | `tbeam-transceptor` |
 
 **El micro del transceptor autónomo**: un micro-altavoz Bluetooth con PTT de
 los de POC. La placa hace de "teléfono" (manos libres HFP, audio CVSD a 8 kHz,
@@ -341,6 +344,7 @@ Con **PlatformIO** (compila y flashea de una vez):
 cd firmware
 pio run -e lora32 -t upload        # o -e tbeam
 pio run -e transceptor -t upload   # el transceptor autónomo (LoRa32 + micro BT)
+pio run -e tbeam-transceptor -t upload   # lo mismo en una T-Beam v1.2
 ```
 
 El `transceptor` compila Arduino como componente de ESP-IDF (necesita el

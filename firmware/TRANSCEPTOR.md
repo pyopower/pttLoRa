@@ -240,3 +240,11 @@ contadores, el heap y el estado en texto salen con `nodo.py audio` / `estado`.
 - Un indicativo sale entero o no sale: a medias podría ser el de otra estación.
 - `audio captura [1|2|3]` vuelca la pantalla para verla desde otra máquina (con 1, 2 y 3
   es una demostración, sin emitir).
+
+## En una T-Beam v1.2 (`pio run -e tbeam-transceptor`)
+
+El mismo firmware para la T-Beam: la radio y el GPS se encienden desde el AXP2101
+(`-DPLACA_TBEAM`, XPowersLib) y el PTT de placa es el botón de usuario (GPIO38),
+no el PRG. Probado el 14-oct-2026 con un micro Abbree/KST_vHMIC010: emparejado
+por USB (`audio bt buscar` + `conecta`), voz en los dos sentidos. En el flasher
+web es «T-Beam v1.2 · transceptor autónomo».
