@@ -18,3 +18,5 @@ target_include_directories(pttlora PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/codec2/src
     ${CMAKE_CURRENT_BINARY_DIR}/codec2)
 target_link_libraries(pttlora codec2 log)
+# Google Play: páginas de 16 KB (Android 15+).
+target_link_options(pttlora PRIVATE "-Wl,-z,max-page-size=16384")

@@ -135,6 +135,20 @@ class MainActivity : Activity(), NodoService.Observador {
         super.onCreate(b)
         prefs = Prefs(this)
         setContentView(R.layout.principal)
+        /* Android 15+ con target 35+: la app se pinta DEBAJO de las barras del
+           sistema y no hay forma de evitarlo. Se le da a la raíz el margen de
+           las barras, sumado al relleno que ya tuviera. */
+        if (Build.VERSION.SDK_INT >= 35) {
+            val raiz = findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0)
+            val l0 = raiz.paddingLeft; val t0 = raiz.paddingTop
+            val r0 = raiz.paddingRight; val b0 = raiz.paddingBottom
+            raiz.setOnApplyWindowInsetsListener { v, ins ->
+                val m = ins.getInsets(android.view.WindowInsets.Type.systemBars() or
+                                      android.view.WindowInsets.Type.displayCutout())
+                v.setPadding(l0 + m.left, t0 + m.top, r0 + m.right, b0 + m.bottom)
+                ins
+            }
+        }
         tEstado = findViewById(R.id.estado)
         tQuien = findViewById(R.id.quien)
         tLog = findViewById(R.id.log)
@@ -186,7 +200,7 @@ class MainActivity : Activity(), NodoService.Observador {
                enlace" cuando en realidad se esta saliendo por Internet. */
             onEnlace(it.enlazado || it.datosEnlazado,
                      if (it.enlazado) prefs.nombreNodo
-                     else if (it.datosEnlazado) "solo datos"
+                     else if (it.datosEnlazado) (if (prefs.hayNodo) "online · buscando la placa" else "online (sin placa)")
                      else it.ultimoFallo)
             onCanal(it.canalOcupado)
             // Se puede volver a esta pantalla con el PTT ya abierto (tecla
@@ -360,9 +374,17 @@ class MainActivity : Activity(), NodoService.Observador {
         bDatos.text = textoDatos()
         bDatos.setOnClickListener { caminoDeDatos { bDatos.text = textoDatos() } }
         val bPos = v.findViewById<Button>(R.id.posicion)
-        fun textoPos() = "Posición y APRS: " + if (prefs.posActiva) "encendida" else "apagada"
+        val bAprs = v.findViewById<Button>(R.id.aprs)
+        fun textoPos() = "Posición: " + if (prefs.posActiva) "encendida" else "apagada"
+        fun textoAprs() = "Salir en aprs.fi: " + when {
+            prefs.aprsSsid < 0 -> "no"
+            !prefs.posActiva -> "sí, pero la posición está apagada"
+            else -> "como " + comoSaleEnAprs(prefs.aprsSsid)
+        }
         bPos.text = textoPos()
-        bPos.setOnClickListener { posicion { bPos.text = textoPos() } }
+        bAprs.text = textoAprs()
+        bPos.setOnClickListener { posicion { bPos.text = textoPos(); bAprs.text = textoAprs() } }
+        bAprs.setOnClickListener { salirEnAprs { bAprs.text = textoAprs() } }
         val bTema = v.findViewById<Button>(R.id.tema)
         val nombresTema = arrayOf("Como el sistema", "Claro", "Oscuro")
         fun textoTema() = "Aspecto: " + nombresTema[prefs.tema]
@@ -521,8 +543,12 @@ class MainActivity : Activity(), NodoService.Observador {
             .apply { if (prefs.listo) setNegativeButton("Volver", null) }
             .setPositiveButton("Guardar") { _, _ ->
                 prefs.indicativo = eInd.text.toString()
+                /* 1.0: sin placa elegida, se empieza por Internet (modo
+                   online) en vez de no dejar seguir. */
+                if (prefs.indicativo.isNotBlank() && !prefs.hayNodo)
+                    prefs.datosActivo = true
                 if (!prefs.listo) {
-                    Toast.makeText(this, "Hace falta indicativo y nodo",
+                    Toast.makeText(this, "Hace falta tu indicativo",
                                    Toast.LENGTH_LONG).show()
                     ajustes()
                 } else {
@@ -1021,11 +1047,11 @@ class MainActivity : Activity(), NodoService.Observador {
                esa confusión costó una mañana el 9-sep. */
             val estado = NodoService.instancia?.posTexto ?: "el servicio no está en marcha"
             AlertDialog.Builder(this)
-                .setTitle("Posición y APRS")
+                .setTitle("Posición")
                 .setMessage("Tu posición sale en el INICIO de cada transmisión: " +
                     "cuando aprietas el PTT, no cada minuto.\n\n" +
-                    "Va por radio, y desde una celda con Internet puede " +
-                    "publicarse en APRS-IS y verse en aprs.fi.\n\n" +
+                    "Va por radio. Salir además en aprs.fi es otra opción, " +
+                    "aparte: «Salir en aprs.fi».\n\n" +
                     "Último envío al nodo:\n$estado")
                 .setPositiveButton("Apagar") { _, _ ->
                     prefs.posActiva = false
@@ -1045,10 +1071,8 @@ class MainActivity : Activity(), NodoService.Observador {
                 "cualquiera con un receptor puede leerla. No es como mandarla " +
                 "a un servidor: es algo que emite tu estación, igual que el " +
                 "indicativo.\n\n" +
-                "2) EN APRS-IS, si una celda con Internet la publica. Entonces " +
-                "sales en aprs.fi con tu indicativo — que es PÚBLICO, lo ve " +
-                "cualquiera, y queda guardado en el histórico PARA SIEMPRE. " +
-                "Borrarlo después no está en tu mano.\n\n" +
+                "2) EN APRS-IS, SOLO SI LO PIDES aparte en «Salir en aprs.fi». " +
+                "Encender la posición no te pone en ningún mapa público.\n\n" +
                 "Apagándola, el nodo la olvida y deja de publicarla.")
             .setPositiveButton("Encender") { _, _ ->
                 /* El permiso se pide AQUI y no al arrancar la app: pedir la
@@ -1065,6 +1089,64 @@ class MainActivity : Activity(), NodoService.Observador {
                 luego()
             }
             .setNegativeButton("Dejarlo", null)
+            .show()
+    }
+
+    /** Cómo sale en APRS: el indicativo SIN el SSID de radio, con el de APRS.
+     *  En la red se puede ser C31AG-7 y en el mapa querer C31AG-9. */
+    private fun comoSaleEnAprs(ssid: Int): String {
+        val base = prefs.indicativo.substringBefore('-').trim().uppercase()
+            .ifEmpty { "TU-INDICATIVO" }
+        return if (ssid == 0) base else "$base-$ssid"
+    }
+
+    /** SALIR EN APRS. Aparte de la posición porque es otra decisión: la
+     *  posición por radio la oye quien esté en el aire; aprs.fi es público,
+     *  mundial y guarda el histórico PARA SIEMPRE.
+     *
+     *  El permiso no va a ningún servidor: viaja por radio en cada
+     *  transmisión, pegado a la posición, y el igate de una celda con Internet
+     *  publica a quien lo lleve. Hace falta un nodo con firmware 1.53 o
+     *  posterior; con uno anterior no sale nadie. */
+    private fun salirEnAprs(luego: () -> Unit) {
+        /* Los SSID con costumbre en APRS (APRS SSID recommendations): */
+        val ssids = intArrayOf(-1, 9, 7, 5, 0, 1, 2, 3, 4, 6, 8, 10, 11, 12, 13, 14, 15)
+        val uso = mapOf(-1 to "", 9 to " · coche / móvil", 7 to " · walkie, portátil",
+                        5 to " · smartphone", 0 to " · estación fija")
+        val nombres = ssids.map { s ->
+            if (s < 0) "No salir en aprs.fi"
+            else comoSaleEnAprs(s) + (uso[s] ?: "")
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Salir en aprs.fi")
+            .setItems(nombres) { _, i ->
+                val s = ssids[i]
+                if (s < 0) {
+                    prefs.aprsSsid = -1
+                    NodoService.instancia?.reenviaPosicion()
+                    luego()
+                    return@setItems
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("¿Salir como ${comoSaleEnAprs(s)}?")
+                    .setMessage("Cada vez que hables, tu posición se publicará en " +
+                        "APRS-IS y se verá en aprs.fi con ese indicativo.\n\n" +
+                        "aprs.fi es PÚBLICO, lo ve cualquiera, y guarda el " +
+                        "histórico PARA SIEMPRE: borrarlo después no está en tu " +
+                        "mano.\n\n" +
+                        "Solo sales si tu transmisión llega por radio a una celda " +
+                        "con Internet, y hace falta que tu nodo tenga el firmware " +
+                        "1.53 o posterior." +
+                        if (!prefs.posActiva) "\n\n⚠️ Tienes la POSICIÓN APAGADA: " +
+                            "hasta que la enciendas no sale nada." else "")
+                    .setPositiveButton("Salir en aprs.fi") { _, _ ->
+                        prefs.aprsSsid = s
+                        NodoService.instancia?.reenviaPosicion()
+                        luego()
+                    }
+                    .setNegativeButton("Dejarlo", null)
+                    .show()
+            }
             .show()
     }
 

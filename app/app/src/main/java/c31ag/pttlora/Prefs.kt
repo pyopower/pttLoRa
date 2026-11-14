@@ -102,6 +102,14 @@ class Prefs(ctx: Context) {
         get() = p.getBoolean("pos_activa", false)
         set(v) { p.edit().putBoolean("pos_activa", v).apply() }
 
+    /** SALIR EN APRS (aprs.fi): -1 = no; 0..15 = con ese SSID. Aparte de la
+     *  posición a propósito: la posición por radio es una cosa y quedar en un
+     *  histórico público PARA SIEMPRE es otra, y cada una se decide sola. Sin
+     *  posición encendida no sale nada, porque no hay qué publicar. */
+    var aprsSsid: Int
+        get() = p.getInt("aprs_ssid", -1)
+        set(v) { p.edit().putInt("aprs_ssid", v.coerceIn(-1, 15)).apply() }
+
     /** Aspecto: 0 = como el sistema, 1 = claro, 2 = oscuro. Por defecto sigue
      *  al sistema, que es lo que espera casi todo el mundo. */
     var tema: Int
@@ -269,8 +277,10 @@ class Prefs(ctx: Context) {
         get() = p.getInt("ganancia", 1)
         set(v) = p.edit().putInt("ganancia", v).apply()
 
-    val listo: Boolean get() = indicativo.isNotBlank() &&
-        (if (porWifi) host.isNotBlank() else mac.isNotBlank())
+    /** 1.0: SIN PLACA TAMBIÉN SE PUEDE EMPEZAR, por el camino de datos
+     *  (modo online). La placa se busca sola en cuanto se elija. */
+    val hayNodo: Boolean get() = if (porWifi) host.isNotBlank() else mac.isNotBlank()
+    val listo: Boolean get() = indicativo.isNotBlank() && (hayNodo || datosActivo)
 
     companion object {
         const val PERFIL_AUTO = 0

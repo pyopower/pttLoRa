@@ -542,28 +542,11 @@ class NodoService : Service() {
                    ninguna cadencia: solo afina el cierre. */
                 try { Thread.sleep(200) } catch (e: InterruptedException) { return@Thread }
                 val ahora = System.currentTimeMillis()
-                if (enlazado) {
-                    espera = 3000L
-                    if (!transmitiendo && ahora - ultimoLatido >= 10000) {
-                        ultimoLatido = ahora
-                        nodo?.latido()
-                    }
-                    /* LA POSICIÓN TAMBIÉN HAY QUE REFRESCARLA AUNQUE NO SE
-                       MUEVA UNO. En el nodo, una posición viva CADUCA a la
-                       media hora —para que un nodo que perdió el móvil deje de
-                       jurar dónde está—, pero el móvil quieto no manda nada:
-                       las actualizaciones de ubicación llegan por movimiento
-                       (25 m) o cada 30 s, y con el filtro de distancia un
-                       teléfono en una mesa puede pasarse horas callado.
-                       Resultado: te caes del mapa sin moverte del sitio, que es
-                       exactamente lo contrario de lo que la caducidad busca.
-                       Se reenvía la última cada 10 minutos: tres veces dentro
-                       de la ventana de media hora, así que aguanta perder dos. */
-                    /* AVISAR CUANDO SE PIERDE Y CUANDO VUELVE LA RADIO.
-                       Sin esto, quedarse sin cobertura de RF es invisible: se
-                       sigue oyendo a todo el mundo por el camino de datos y
-                       parece que va bien, mientras lo que tú dices no lo oye
-                       nadie. Es el aviso más importante que da esta app. */
+                /* 1.0: CON PLACA O EN MODO ONLINE. Cerrar recepciones, el
+                   vigía del PTT y el micro listo no dependen de la placa: antes
+                   vivían dentro de `if (enlazado)` y solo por datos la voz
+                   recibida no se cerraba nunca. */
+                if (enlazado || datosEnlazado) {
                     /* QUIEN CIERRA UNA RECEPCION ES EL RELOJ.
                        Dos motivos para cerrar, y ninguno es "ha llegado el FIN":
                         · con FIN: se espera `MARGEN_FIN` a los rezagados —por
@@ -598,6 +581,29 @@ class NodoService : Service() {
                        `AudioEngine.preparaMicro`: montarlo dentro del PTT
                        costaba las primeras palabras. */
                     if (audio == null) preparaMicroYa()
+                }
+                if (enlazado) {
+                    espera = 3000L
+                    if (!transmitiendo && ahora - ultimoLatido >= 10000) {
+                        ultimoLatido = ahora
+                        nodo?.latido()
+                    }
+                    /* LA POSICIÓN TAMBIÉN HAY QUE REFRESCARLA AUNQUE NO SE
+                       MUEVA UNO. En el nodo, una posición viva CADUCA a la
+                       media hora —para que un nodo que perdió el móvil deje de
+                       jurar dónde está—, pero el móvil quieto no manda nada:
+                       las actualizaciones de ubicación llegan por movimiento
+                       (25 m) o cada 30 s, y con el filtro de distancia un
+                       teléfono en una mesa puede pasarse horas callado.
+                       Resultado: te caes del mapa sin moverte del sitio, que es
+                       exactamente lo contrario de lo que la caducidad busca.
+                       Se reenvía la última cada 10 minutos: tres veces dentro
+                       de la ventana de media hora, así que aguanta perder dos. */
+                    /* AVISAR CUANDO SE PIERDE Y CUANDO VUELVE LA RADIO.
+                       Sin esto, quedarse sin cobertura de RF es invisible: se
+                       sigue oyendo a todo el mundo por el camino de datos y
+                       parece que va bien, mientras lo que tú dices no lo oye
+                       nadie. Es el aviso más importante que da esta app. */
 
                     val radio = hayRadio()
                     if (radio != radioAvisada) {
@@ -617,7 +623,7 @@ class NodoService : Service() {
                     if (prefs.posActiva && ahora - ultimoPosEnviada >= 600000) {
                         ultimaPos?.let { (la, lo) ->
                             ultimoPosEnviada = ahora
-                            nodo?.posicion(la, lo, false)
+                            nodo?.posicion(la, lo, false, prefs.aprsSsid)
                         }
                     }
                     /* ENLACE MUDO = ENLACE MUERTO.
@@ -639,7 +645,7 @@ class NodoService : Service() {
                     ultimoIntento = ahora
                     espera = (espera * 3 / 2).coerceAtMost(20000L)
                     Log.i(TAG, "sin enlace: reintentando")
-                    observador?.onLog("reintentando conectar…")
+                    if (!datosEnlazado) observador?.onLog("reintentando conectar…")
                     conecta()
                 }
 
@@ -680,6 +686,14 @@ class NodoService : Service() {
      *  más a menudo sería mandar datos que nadie va a emitir. */
     private val POS_CADA_MS = 30000L
     private val POS_CADA_M = 25f
+
+    /** Al cambiar lo de APRS: se le manda al nodo YA con la última posición,
+     *  sin esperar al siguiente arreglo del GPS (que puede tardar minutos con
+     *  el móvil quieto). */
+    fun reenviaPosicion() {
+        if (!prefs.posActiva || !enlazado) return
+        ultimaPos?.let { (la, lo) -> nodo?.posicion(la, lo, false, prefs.aprsSsid) }
+    }
 
     fun posicion(activa: Boolean) {
         if (!activa) {
@@ -785,7 +799,7 @@ class NodoService : Service() {
             posTexto += " · sin nodo al que mandarla"
             return
         }
-        nodo?.posicion(la, lo, false)
+        nodo?.posicion(la, lo, false, prefs.aprsSsid)
         ultimoPosEnviada = System.currentTimeMillis()
         // Se apunta la primera y luego solo de vez en cuando: cada 30 s en el
         // registro seria ruido, pero no ver NINGUNA es peor.
@@ -831,8 +845,9 @@ class NodoService : Service() {
         val destino = if (porWifi) prefs.host else prefs.mac
         if (destino.isBlank()) {
             conectando = false
-            observador?.onEnlace(false,
-                if (porWifi) "sin dirección del nodo" else "sin nodo elegido")
+            observador?.onEnlace(datosEnlazado,
+                if (datosEnlazado) "online (sin placa)"
+                else if (porWifi) "sin dirección del nodo" else "sin nodo elegido")
             return
         }
         val n = Nodo(::evento, { ok, detalle ->
@@ -844,7 +859,7 @@ class NodoService : Service() {
                    (ver `ultimaPos`), así que sin esto un nodo que se reinicia
                    deja de aparecer en el mapa sin que nadie lo note. */
                 if (prefs.posActiva) ultimaPos?.let { (la, lo) ->
-                    nodo?.posicion(la, lo, false)
+                    nodo?.posicion(la, lo, false, prefs.aprsSsid)
                 }
                 /* El indicativo se manda SIEMPRE al conectar, y por DOS
                    caminos distintos que no son lo mismo:
@@ -893,10 +908,10 @@ class NodoService : Service() {
             val hayAlgo = ok || datosEnlazado
             observador?.onEnlace(hayAlgo,
                 if (ok) detalle
-                else if (datosEnlazado) "solo datos · $detalle"
+                else if (datosEnlazado) "online · buscando la placa"
                 else detalle)
             notifica(if (ok) "Enlazado con $detalle"
-                     else if (datosEnlazado) "Solo datos" else detalle)
+                     else if (datosEnlazado) "Online · buscando la placa" else detalle)
         }, this)
         n.onDiagnostico = { apunta("bluetooth: $it") }
         nodo = n
@@ -920,9 +935,14 @@ class NodoService : Service() {
             datosEnlazado = ok
             apunta(if (ok) "🌐 datos · $detalle" else "🌐 datos sin enlace · $detalle")
             if (ok) nodoDatos?.identifica(prefs.indicativo)
+            if (!enlazado) notifica(if (!ok) "Sin enlace"
+                                    else if (prefs.hayNodo) "Online · buscando la placa"
+                                    else "Online (sin placa)")
             observador?.onEnlace(enlazado || datosEnlazado,
                                  if (enlazado) "radio"
-                                 else if (ok) "solo datos"
+                                 else if (ok) (if (prefs.hayNodo)
+                                     "online · buscando la placa"
+                                     else "online (sin placa)")
                                  else "sin enlace")
         }, this)
         nodoDatos = n
@@ -1577,7 +1597,7 @@ class NodoService : Service() {
            poner el boton en verde aqui era mentir durante 250 ms — y encima
            parpadeaba en cada pulsacion. */
         notifica(if (enlazado) "Enlazado"
-                 else if (datosEnlazado) "Solo datos"
+                 else if (datosEnlazado) (if (prefs.hayNodo) "Online · buscando la placa" else "Online (sin placa)")
                  else "Sin enlace")
     }
 

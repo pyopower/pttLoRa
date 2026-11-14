@@ -23,16 +23,16 @@ val clavesFirma = Properties().apply {
 
 android {
     namespace = "c31ag.pttlora"
-    compileSdk = 34
+    compileSdk = 36
     // NDK 25: el ultimo que compila para API 19 (Android 4.4).
     ndkVersion = "25.2.9519653"
 
     defaultConfig {
         applicationId = "c31ag.pttlora"
         minSdk = 19
-        targetSdk = 34
-        versionCode = 71
-        versionName = "0.9.57"
+        targetSdk = 36   // Google Play (1.0)
+        versionCode = 73
+        versionName = "1.0"
         /* Con `-PsoloV7a` sale una APK **solo de 32 bits**: la mitad de tamaño
            y sin la biblioteca de 64, que en un móvil viejo no pinta nada. Es
            el mismo truco del /apk7 de la app PTT. Sin la propiedad, las dos
