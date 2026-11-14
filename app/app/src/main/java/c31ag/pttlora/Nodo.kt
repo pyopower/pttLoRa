@@ -533,13 +533,18 @@ class Nodo(private val onEvento: (Int, ByteArray) -> Unit,
     /** Le pasa al nodo dónde está, en diezmillonésimas de grado y con signo.
      *  Little-endian a mano: el orden de bytes es parte del protocolo y no
      *  puede depender de la máquina que lo compile. */
-    fun posicion(latE7: Int, lonE7: Int, fija: Boolean = false) {
-        val d = ByteArray(9)
+    /** `aprsSsid`: -1 = no salir en APRS; 0..15 = salir con ese SSID. Va en
+     *  un décimo byte (0x80 | SSID) que el nodo (fw v1.53) pega al INICIO y el
+     *  igate lee; un nodo más antiguo lo ignora y no sale nadie, que es lo
+     *  seguro. */
+    fun posicion(latE7: Int, lonE7: Int, fija: Boolean = false, aprsSsid: Int = -1) {
+        val d = ByteArray(if (aprsSsid in 0..15) 10 else 9)
         d[0] = (if (fija) POS_FIJA else POS_VIVA).toByte()
         for (i in 0..3) {
             d[1 + i] = ((latE7 shr (8 * i)) and 0xFF).toByte()
             d[5 + i] = ((lonE7 shr (8 * i)) and 0xFF).toByte()
         }
+        if (aprsSsid in 0..15) d[9] = (0x80 or aprsSsid).toByte()
         manda(CMD_POS, d)
     }
 

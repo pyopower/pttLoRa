@@ -19,7 +19,7 @@
 #define PROTO_MAGIC   0xA1        // 0xA0 | version 1
 // Version del firmware. Sale en el estado: es como se comprueba que una
 // actualizacion por radio ha entrado de verdad.
-#define VERSION       "1.52"
+#define VERSION       "1.53"
 
 #define MAX_PAYLOAD   200         // holgado para un lote de 960 ms a 1200 bps
 #define MAX_INDICATIVO 12
@@ -108,7 +108,11 @@ struct Cabecera {
 
 // Cuerpo segun tipo:
 //   T_VOZ    : [modo][n_tramas][datos...]
-//   T_INICIO : [modo][indicativo]\0[lat:4][lon:4]   (la cola, desde la v1.35)
+//   T_INICIO : [modo][indicativo]\0[aprs:1]?[lat:4][lon:4]   (la cola, desde la v1.35)
+//              `aprs` (v1.53, opcional) = 0x80 | SSID: quien habla quiere salir
+//              en APRS como <indicativo sin SSID>-<SSID>. Tras el cero quedan 8
+//              bytes (sin permiso) o 9 (con el). La posicion son SIEMPRE los
+//              ultimos 8: asi lo leen los que no conocen este byte.
 //   T_FIN    : (vacio)
 //   T_HOLA   : [flags][bateria %][indicativo]\0[nombre]\0[lat:4][lon:4]
 //   T_INFORME: texto `clave=valor` separado por espacios. SOLO por el enlace.
@@ -337,7 +341,9 @@ enum : uint8_t {
      * una OTA por la mitad no rompe nada (la placa sigue con el firmware que
      * tenia) pero obliga a repetirla entera, y son cinco minutos. */
     CMD_REINICIA = 0x18, // -
-    CMD_POS    = 0x17,   // [origen][lat:4][lon:4]   posicion del nodo
+    CMD_POS    = 0x17,   // [origen][lat:4][lon:4][aprs]?   posicion del nodo
+                         // `aprs` (v1.53, opcional): 0x80 | SSID para salir en
+                         // APRS (ver T_INICIO); sin el, o a 0, no se sale.
                          // Vacio = olvidarla Y DEJAR DE PUBLICAR (tambien la
                          // del GPS propio); con datos, se vuelve a publicar.
     CMD_NOMBRE = 0x15,   // [nombre ASCII]  como se llama el CACHARRO en la

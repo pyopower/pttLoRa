@@ -67,7 +67,11 @@
 
     <Button android:id="@+id/posicion"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Posición y APRS" />
+        android:text="Posición" />
+
+    <Button android:id="@+id/aprs"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Salir en aprs.fi" />
 
     <Button android:id="@+id/tema"
         android:layout_width="match_parent" android:layout_height="wrap_content"

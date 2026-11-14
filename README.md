@@ -134,6 +134,13 @@ Android 4.4 o posterior. Abre la app, entra en **Ajustes**, escribe **tu
 indicativo** y elige el nodo — aparece por Bluetooth, o por WiFi si la placa
 está en tu red. Y ya puedes hablar.
 
+**¿Quieres salir en aprs.fi?** En **Ajustes**, enciende **Posición** y luego
+**Salir en aprs.fi**, y elige tu SSID (‑9 coche, ‑7 portátil…). No hace falta
+cuenta ni passcode: el permiso viaja por radio con tu posición en cada
+transmisión, y el igate del servidor público te publica con tu indicativo en
+cuanto llegas a una celda con Internet. Hace falta firmware 1.53 o posterior
+en tu placa. Ojo: aprs.fi es público y guarda el histórico para siempre.
+
 ⚠️ Sin indicativo el nodo sale como `NOCALL` y no debe transmitir: **esto es
 para radioaficionados con licencia**, en 70 cm y sin cifrar.
 
@@ -443,7 +450,7 @@ usando el resto del servidor público, o al revés.
 |---|---|---|---|
 | **reflector** | 4461 | Punto de reunión de las celdas: une por internet zonas que no se oyen por radio, y arbitra quién habla. | Sólo si quieres una red aparte. Usando el público, tu grupo comparte canal con quien esté. |
 | **nodo de datos** | 4460 | Un nodo sin radio al que se conecta la app: permite hablar **desde el móvil sin placa**, y sirve de red de seguridad cuando la radio no llega. | Sólo si has montado tu propio reflector: va colgado de él. |
-| **igate APRS** | — | Publica en APRS-IS las posiciones que ve en el reflector, y salen en aprs.fi. | **Éste sí conviene propio**: entra en APRS-IS con **tu** indicativo, y decides tú qué estaciones se publican. |
+| **igate APRS** | — | Publica en APRS-IS las posiciones que ve en el reflector, y salen en aprs.fi: las celdas de su lista y **quien se dé de alta desde la app**. | Sólo si quieres tu propia red. El público ya publica a cualquiera que lo pida desde la app; uno propio entra en APRS-IS con **tu** indicativo y decides tú (`altas = no` para publicar solo tu lista). |
 | **relevo de mando** | 4464 | Administrar y actualizar un nodo instalado en una red ajena, donde no puedes abrir puertos: es el nodo quien llama. | Sólo si tienes una celda en un sitio prestado. |
 | **censo de la red** | — | Anota qué células hay, desde cuándo, dónde y **quién oye a quién y con cuánta señal**. Observador puro: si se cae, la radio ni se entera. | Opcional. Es lo que convierte una lista de nodos en un mapa de sombras. |
 

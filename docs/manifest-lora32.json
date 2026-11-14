@@ -1,6 +1,6 @@
 {
   "name": "PTT LoRa (lora32)",
-  "version": "1.52",
+  "version": "1.53",
   "new_install_prompt_erase": false,
   "builds": [
     {

@@ -519,6 +519,12 @@ static int32_t  pos_lat = 0, pos_lon = 0;
 static bool     hay_pos = false;
 static uint8_t  pos_origen = POS_VIVA;
 static bool     pos_publica = true;
+/* SALIR EN APRS, lo decide el movil (CMD_POS, decimo byte): 0 = no, o
+   0x80 | SSID. Viaja por radio en el INICIO, entre el cero y la posicion, y el
+   igate publica a quien lo lleve. Asi el permiso va pegado al dato y por el
+   mismo camino: solo sale en aprs.fi quien ha llegado por RF a una celda. En
+   RAM: el movil lo repite con cada posicion. */
+static uint8_t  pos_aprs = 0;
 static uint32_t t_pos = 0;            // cuando se supo (millis)
 /* Media hora. Es mucho mas que el intervalo con el que un movil manda su GPS
    (segundos) y mucho menos que un paseo: si se pasa de ahi, o el movil se fue o
@@ -2777,6 +2783,10 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
            entienda corta el indicativo en el primer cero y lee lo de siempre. */
         if (pos_vale() && pos_publica) {
             b[l++] = 0;
+            /* El permiso de APRS, si lo hay, ENTRE el cero y la posicion. Quien
+               no lo entienda no se entera: los lectores cortan el indicativo en
+               el primer cero y sacan la posicion de los ULTIMOS 8 bytes. */
+            if (pos_aprs) b[l++] = pos_aprs;
             uint32_t la = (uint32_t)pos_lat, lo = (uint32_t)pos_lon;
             for (int i = 0; i < 4; i++) b[l++] = (uint8_t)(la >> (8 * i));
             for (int i = 0; i < 4; i++) b[l++] = (uint8_t)(lo >> (8 * i));
@@ -3264,6 +3274,7 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
                un nodo desatendido tiene que seguir callado tras un corte. */
             hay_pos = false;
             pos_publica = false;
+            pos_aprs = 0;
             prefs.begin("pttlora", false);
             prefs.remove("poslat"); prefs.remove("poslon");
             prefs.putBool("pospub", false);
@@ -3283,6 +3294,9 @@ static void orden(uint8_t tipo, uint8_t *d, uint16_t n, int idx)
             break;
         }
         bool fija = (d[0] == POS_FIJA);
+        /* Decimo byte (opcional): salir en APRS. Un movil antiguo manda nueve
+           y eso es "no", que es lo que tiene que ser por defecto. */
+        pos_aprs = (n >= 10 && (d[9] & 0x80)) ? (uint8_t)(0x80 | (d[9] & 0x0F)) : 0;
         /* Que le manden una posicion vuelve a encender la publicacion: el
            interruptor de la app es una sola orden en los dos sentidos. */
         if (!pos_publica) {

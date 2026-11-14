@@ -36,6 +36,7 @@ historico para siempre**, asi que nadie debe acabar ahi por descuido.
 import configparser
 import math
 import os
+import re
 import socket
 import sys
 import threading
@@ -123,6 +124,15 @@ def lee_baliza(t):
         flags, bateria = t[CAB_LEN], t[CAB_LEN + 1]
         cuerpo = t[CAB_LEN + 2:]
     lat = lon = None
+    aprs = None
+    # ALTA DESDE LA APP (fw v1.53): en el INICIO, entre el cero y la posicion
+    # puede venir un byte 0x80 | SSID — quien habla pide salir en APRS. Se
+    # distingue por la longitud de lo que hay tras el PRIMER cero (el indicativo
+    # no lleva ceros): 8 = solo posicion, 9 = permiso + posicion.
+    if tipo == T_INICIO and 0 in cuerpo:
+        cola = cuerpo[cuerpo.index(0) + 1:]
+        if len(cola) == 9 and cola[0] & 0x80:
+            aprs = cola[0] & 0x0F
     # En el INICIO no hay flags: la posicion esta si hay cola detras del cero.
     hay = (flags & HOLA_POS) if tipo == T_HOLA else (0 in cuerpo)
     if hay and len(cuerpo) >= 9:
@@ -135,7 +145,22 @@ def lee_baliza(t):
     # En el INICIO no viaja el nombre del cacharro, solo el indicativo de quien
     # habla. La lista blanca se busca igual: primero por nombre, luego por src.
     return dict(src=src, flags=flags, bateria=bateria, indicativo=ind,
-                nombre=nombre if tipo == T_HOLA else '', lat=lat, lon=lon)
+                nombre=nombre if tipo == T_HOLA else '', lat=lat, lon=lon,
+                aprs=aprs)
+
+
+def alta_aprs(indicativo, ssid):
+    """Indicativo de quien habla + SSID que ha elegido -> como sale en APRS.
+
+    Se quita el SSID con el que habla por radio y se pone el que ha pedido para
+    APRS: son cosas distintas (en la red puede ser C31AG-7 y en el mapa querer
+    C31AG-9). SSID 0 = sin sufijo. Lo que no tenga pinta de indicativo no se
+    publica: aprs.fi lo guardaria para siempre."""
+    base = indicativo.split('-')[0].strip().upper()
+    if not re.fullmatch(r'[A-Z0-9]{3,7}', base) or not re.search(r'\d', base) \
+            or base == 'NOCALL':
+        return None
+    return base if ssid == 0 else '%s-%d' % (base, ssid)
 
 
 def grados_aprs(v, largo, borroso=0):
@@ -192,6 +217,10 @@ class Igate:
         # aprs.fi guarda el historico para siempre. Asi se puede ver exactamente
         # que saldria antes de que salga.
         self.enviar = cfg['aprs'].get('enviar', 'no').strip().lower() in ('si', 'sí', 'yes', '1')
+        # Altas desde la app: publicar tambien a quien lo pida en su INICIO,
+        # aunque no este en [nodos]. `no` = solo la lista blanca.
+        self.altas = cfg['aprs'].get('altas', 'si').strip().lower() in ('si', 'sí', 'yes', '1')
+        self.altas_vistas = set()
         self.comentario = cfg['aprs'].get(
             'comentario', '434.400MHz Voice over LoRa').strip()
         # Que se le pega detras al comentario. Es una lista y no dos
@@ -306,10 +335,18 @@ class Igate:
                   '%06x' % b['src']]
         destino, borroso = next(
             (self.nodos[k] for k in claves if k and k in self.nodos), (None, 0))
+        # La lista blanca manda. Si no esta en ella, puede haberse dado de alta
+        # el mismo desde la app: el permiso viaja en su INICIO (ver lee_baliza).
+        if not destino and b.get('aprs') is not None and self.altas:
+            destino = alta_aprs(b['indicativo'], b['aprs'])
+            if destino and destino not in self.altas_vistas:
+                self.altas_vistas.add(destino)
+                log('alta desde la app: %s sale como %s' % (b['indicativo'], destino))
         if not destino:
+            clave = (b['nombre'], b['indicativo'], b['src'])
             if clave not in self.desconocidos:
                 self.desconocidos.add(clave)
-                log('sin publicar: %s (%s, src %06x) no esta en [nodos]'
+                log('sin publicar: %s (%s, src %06x) no esta en [nodos] ni se ha dado de alta'
                     % (b['nombre'] or '?', b['indicativo'], b['src']))
             return
 

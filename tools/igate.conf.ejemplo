@@ -33,7 +33,7 @@ puerto = 14580
 # si se pasa. Con `nombre` y `bateria` detras, la linea de arriba se queda en
 # unos 26. El dia que el proyecto tenga URL publica, cabe asi:
 #
-#   comentario = 439.600MHz Voice over LoRa pttlora.adan.ovh
+#   comentario = 434.300MHz Voice over LoRa pttlora.adan.ovh
 
 # LA LINEA DE ESTADO: que es esto y donde mirarlo.
 #
@@ -56,7 +56,7 @@ estado_cada = 1800
 #   extras =
 #
 # ...o quitando solo la bateria (`extras = nombre`) si la URL es corta.
-comentario = 439.600MHz Voice over LoRa
+comentario = 434.300MHz Voice over LoRa
 
 # Que se le pega detras: `nombre` del cacharro y/o `bateria`. Vacio = nada.
 # La bateria se quito el 8-sep: con ella, `celdaCERRO` se iba a 46 caracteres.
@@ -70,6 +70,13 @@ extras = nombre
 # Publicar en APRS-IS NO SE PUEDE DESHACER — aprs.fi guarda el historico para
 # siempre—, asi que se mira antes de encender.
 enviar = no
+
+# ALTAS DESDE LA APP. Cada usuario puede pedir salir en APRS desde la app
+# (Ajustes → Salir en aprs.fi), eligiendo su SSID. El permiso viaja POR RADIO
+# en el INICIO de cada transmision, pegado a la posicion: solo sale quien ha
+# llegado por RF a una celda, y solo quien lo ha pedido. `no` = solo se publica
+# lo que este en [nodos]. [nodos] manda siempre sobre lo que pida la app.
+altas = si
 
 # Lista BLANCA: nombre del cacharro (o su src en hexadecimal) -> indicativo
 # APRS. A mano y no automatico por dos razones: todos los nodos de un operador
