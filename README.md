@@ -127,8 +127,12 @@ nada. Conectas la placa por USB, pulsas el botón de tu modelo y listo.
 
 | descarga | para |
 |---|---|
-| **[pttlora.apk](https://pyopower.github.io/pttLoRa/pttlora.apk)** | **cualquier móvil** — 64 y 32 bits |
+| **[Google Play](https://play.google.com/store/apps/details?id=c31ag.pttlora)** | **lo más cómodo** — se actualiza sola |
+| [pttlora.apk](https://pyopower.github.io/pttLoRa/pttlora.apk) | sin Play — cualquier móvil, 64 y 32 bits |
 | [pttlora-v7a.apk](https://pyopower.github.io/pttLoRa/pttlora-v7a.apk) | sólo 32 bits, la mitad de tamaño, para móviles viejos |
+
+> La de Play y los APK van firmados con la misma clave: puedes pasar de una a
+> otra sin desinstalar.
 
 Android 4.4 o posterior. Abre la app, entra en **Ajustes**, escribe **tu
 indicativo** y elige el nodo — aparece por Bluetooth, o por WiFi si la placa
@@ -375,7 +379,8 @@ firmware nuevo no ha entrado.
 
 ### La app
 
-**Antes de nada: no hace falta compilarla.** El APK está listo:
+**Antes de nada: no hace falta compilarla.** Está en
+[Google Play](https://play.google.com/store/apps/details?id=c31ag.pttlora), y el APK está listo:
 
 | descarga | para |
 |---|---|
