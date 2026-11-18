@@ -253,6 +253,11 @@ class Igate:
         # repetida cada minuto es ruido en APRS-IS y no aporta nada.
         self.estado_cada = int(cfg['aprs'].get('estado_cada', '1800'))
         self.ultimo_estado = {}          # indicativo APRS -> cuando se mando
+        # Varios estados separados por `||` se turnan, uno en cada envio: aprs.fi
+        # solo enseña el ultimo, y con 62 caracteres no cabe todo en uno (p. ej.
+        # uno con los enlaces y otro que diga que es voz por LoRa).
+        self.estados = [e.strip() for e in self.estado.split('||') if e.strip()]
+        self.turno_estado = {}           # indicativo APRS -> cual toca
         # `nombre = INDICATIVO [borroso N]`. Ver la nota de `grados_aprs`.
         self.nodos = {}
         for k, v in (cfg['nodos'].items() if 'nodos' in cfg else []):
@@ -402,14 +407,17 @@ class Igate:
 
     def manda_estado(self, destino, ahora):
         """La trama de estado, de tarde en tarde. Ver `self.estado`."""
-        if not self.estado:
+        if not self.estados:
             return
         if ahora - self.ultimo_estado.get(destino, 0) < self.estado_cada:
             return
         self.ultimo_estado[destino] = ahora
+        n = self.turno_estado.get(destino, 0)
+        self.turno_estado[destino] = n + 1
         # El indicativo de la estacion, sin el SSID: en el estado interesa quien
         # es, no cual de sus cacharros.
-        txt = self.estado.replace('{indicativo}', destino.split('-')[0])
+        txt = self.estados[n % len(self.estados)].replace(
+            '{indicativo}', destino.split('-')[0])
         txt = txt.encode('ascii', 'ignore').decode('ascii')
         if len(txt) > 62:
             log('⚠ estado de %d caracteres: APRS garantiza 62 -> "%s"'

@@ -49,6 +49,9 @@ puerto = 14580
 # `{indicativo}` se sustituye por el de CADA estacion (sin SSID). Dejalo asi:
 # si escribes un distintivo a mano, tu celda publicara «by» el indicativo de
 # quien escribio la plantilla, no el tuyo.
+# Varios estados separados por `||` se turnan, uno en cada envio (aprs.fi
+# enseña el ultimo). Sirve cuando no cabe todo en 62 caracteres, p. ej.:
+#   estado = PTT LoRa: by {indicativo} github.com/pyopower/pttLoRa || Voice over LoRa (Codec2) by {indicativo}
 estado = PTT LoRa: by {indicativo} github.com/pyopower/pttLoRa
 # Cada cuanto se repite, en segundos. No con cada baliza: una linea que no
 # cambia repetida cada minuto es ruido en APRS-IS.
