@@ -168,11 +168,11 @@ class Prefs(ctx: Context) {
         get() = p.getInt("retraso_lotes", 1)
         set(v) = p.edit().putInt("retraso_lotes", v.coerceIn(0, 2)).apply()
 
-    /** Modo de Codec2 (índice de Codec2.NOMBRES). 1200 por defecto: es el
-     *  punto dulce entre inteligibilidad y ocupación del canal. */
-    var modo: Int
-        get() = p.getInt("modo", PorDefecto.MODO)
-        set(v) = p.edit().putInt("modo", v).apply()
+    /** Modo de Codec2: SIEMPRE 1200 (1.0.3, 19-nov). Antes se podía elegir,
+     *  pero la red solo admite 1200 —el reflector y el nodo de datos tiran lo
+     *  demás— y quien lo cambiaba dejaba de comunicar sin saber por qué. Se
+     *  ignora lo que hubiera guardado de versiones anteriores. */
+    val modo: Int get() = PorDefecto.MODO
 
     /** Papel del nodo. Por defecto **automático**: hace de puente y de
      *  repetidor, y se calla la repetición solo si no hay a quién repetir.

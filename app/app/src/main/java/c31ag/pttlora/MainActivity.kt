@@ -329,7 +329,8 @@ class MainActivity : Activity(), NodoService.Observador {
             else -> "Nodo por Bluetooth: " + prefs.nombreNodo
         }
         bNodo.text = textoNodo()
-        bModo.text = "Códec: " + Codec2.NOMBRES[prefs.modo]
+        // El códec ya no se elige: la red es Codec2 1200 y nada más.
+        bModo.visibility = android.view.View.GONE
         fun textoMicro(): String {
             val g = AudioEngine.MIC_GANANCIAS.getOrElse(prefs.micGanancia) { 1.0f }
             val extra = (if (!prefs.micAgc) " · sin nivelador" else "") +
@@ -516,16 +517,6 @@ class MainActivity : Activity(), NodoService.Observador {
                 }.show()
         }
 
-        bModo.setOnClickListener {
-            AlertDialog.Builder(this)
-                .setTitle("Modo de Codec2")
-                .setItems(Codec2.NOMBRES.mapIndexed { i, n ->
-                    if (i == Prefs.PorDefecto.MODO) "$n  (por defecto)" else n
-                }.toTypedArray()) { _, i ->
-                    prefs.modo = i
-                    bModo.text = "Códec: " + Codec2.NOMBRES[i]
-                }.show()
-        }
 
         AlertDialog.Builder(this)
             /* La version, a la vista. Sin esto no hay manera de saber que se
