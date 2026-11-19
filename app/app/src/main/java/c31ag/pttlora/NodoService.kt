@@ -531,9 +531,9 @@ class NodoService : Service() {
            el usuario entrara en los ajustes a elegir el nodo otra vez. Para el
            pilar de la app eso no vale: se reintenta sola, con espera creciente
            de 3 a 20 s para no freir la bateria si el nodo no esta. */
-        Thread({
+        hiloEnlace = Thread({
             var espera = 3000L
-            while (true) {
+            while (!cerrado) {
                 /* 200 ms y no dos segundos: quien cierra una recepcion es
                    este bucle (ver mas abajo), y con dos segundos de resolucion
                    el margen de 400 ms tras el FIN se convertia en hasta dos
@@ -655,7 +655,7 @@ class NodoService : Service() {
                 if (prefs.datosActivo && nodoDatos?.conectado != true)
                     conectaDatos(true)
             }
-        }, "enlace").apply { isDaemon = true }.start()
+        }, "enlace").apply { isDaemon = true; start() }
         wake = (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pttlora:enlace")
             .apply { setReferenceCounted(false); acquire() }
@@ -806,7 +806,16 @@ class NodoService : Service() {
         if (primera) apunta("📍 posición al nodo: $posTexto")
     }
 
+    /** Puesto al CERRAR la app. El hilo «enlace» no se para solo: seguia
+     *  vivo tras `stopService` y, con el camino de datos activo, lo volvia a
+     *  conectar cada 200 ms y volvia a poner la notificacion — la app no se
+     *  cerraba nunca y el nodo acumulaba clientes fantasma (19-nov-2026). */
+    @Volatile private var cerrado = false
+    private var hiloEnlace: Thread? = null
+
     override fun onDestroy() {
+        cerrado = true
+        hiloEnlace?.interrupt()
         botoneraBt(false)
         paraGps()
         sueltaPtt()
@@ -816,6 +825,11 @@ class NodoService : Service() {
         encoder?.cierra(); decoder?.cierra()
         try { wake?.release() } catch (_: Exception) {}
         instancia = null
+        try {
+            if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE)
+            else @Suppress("DEPRECATION") stopForeground(true)
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(1)
+        } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -837,6 +851,7 @@ class NodoService : Service() {
        que mira la interfaz — se quedaba fuera, con un "Sin enlace" que no
        explicaba nada. */
     fun conecta(forzar: Boolean = false) {
+        if (cerrado) return
         reconectar = true
         if (!forzar && (nodo?.conectado == true || conectando)) return
         if (forzar) { nodo?.desconecta(); nodo = null }
@@ -925,6 +940,7 @@ class NodoService : Service() {
      *  Si dependieran el uno del otro no habria redundancia, habria dos formas
      *  de fallar a la vez. */
     fun conectaDatos(forzar: Boolean = false) {
+        if (cerrado) return
         if (!prefs.datosActivo) {
             nodoDatos?.desconecta(); nodoDatos = null; datosEnlazado = false
             return
@@ -1710,6 +1726,7 @@ class NodoService : Service() {
     }
 
     private fun notifica(texto: String) {
+        if (cerrado) return   // tras cerrar, un aviso tardio la volveria a poner
         try {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(1, construye(texto))
