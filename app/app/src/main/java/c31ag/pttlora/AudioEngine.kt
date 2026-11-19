@@ -26,9 +26,16 @@ class AudioEngine(private val ctx: android.content.Context,
     companion object {
         const val SR = 8000
         /** A partir de aqui el limitador empieza a doblar la curva. */
-        private const val UMBRAL = 20000f
         /** Nivel de voz al que apunta el nivelador del microfono (RMS). */
-        private const val OBJETIVO = 6500.0
+        /* ⚠️ BAJADO DE 6500 A 3000 (1.0.4, 19-nov). 6500 de RMS son -14 dBFS:
+           con los picos normales de la voz (12-15 dB por encima) eso es
+           pegarse al techo en cada sílaba, y el recorte se codificaba DENTRO
+           de los bits — se oía saturado en todos los receptores, también en
+           la placa en modo autónomo. 3000 (-21 dBFS) deja ese margen; el
+           volumen lo pone el que escucha, no el que transmite. */
+        private const val OBJETIVO = 3000.0
+        /** Techo del limitador (-2 dBFS). */
+        private const val TECHO = 26000f
         /** Pasos de ganancia que ofrece Ajustes. */
         val GANANCIAS = floatArrayOf(1.0f, 2.0f, 3.0f, 4.0f, 5.0f)
         /** Ganancias del MICRÓFONO. Empiezan por debajo de 1 a propósito: el
@@ -231,12 +238,16 @@ class AudioEngine(private val ctx: android.content.Context,
                        entrada. Sin medirlo, eso se confunde con "el códec suena
                        mal" — que es exactamente lo que pasó el 10-sep-2026. */
                     miraRecorte(buf, FRAME)
-                    nivelar(buf, FRAME)
+                    /* UNA SOLA GANANCIA: la del nivelador por la de Ajustes,
+                       y luego el limitador. Antes cada una se aplicaba por su
+                       lado con su propio recorte suave, y el segundo volvía a
+                       doblar lo que el primero ya había doblado. */
+                    val gTx = nivelar(buf, FRAME) * micGain
+                    limTx.aplica(buf, FRAME, gTx)
                     /* Y AQUI SE APLICA AUNQUE SEA MENOR QUE 1. Estaba puesto
                        `> 1.0f`, o sea que la ganancia del micro solo podia
                        SUBIR: no habia forma de atenuar una entrada que satura,
                        que es justo lo que hacia falta. */
-                    if (micGain != 1.0f) aplicar(buf, FRAME, micGain)
                     onFrame(buf)
                 }
             }
@@ -361,34 +372,47 @@ class AudioEngine(private val ctx: android.content.Context,
     }
 
     /**
-     * Ganancia extra con limitador de rodilla suave.
-     *
-     * El audio que sale del vocoder DMR viene bajo (unos -13 dBFS) y el altavoz
-     * del movil a tope se queda justo en la calle. Multiplicar a secas
-     * distorsiona en los picos, asi que por encima de UMBRAL la curva se dobla
-     * en vez de recortar: sube el volumen percibido sin que la voz raspe. Sin
-     * funciones trigonometricas, que esto corre interpretado en los POC.
+     * Volumen de recepción. El altavoz del móvil se queda corto con la voz tal
+     * cual sale del decodificador, así que se sube; los picos los coge el
+     * limitador por envolvente (`Limitador`), que no deforma la onda.
      */
     private fun amplificar(pcm: ShortArray, n: Int) {
-        val g = gain
-        if (g <= 1.0f) return
-        aplicar(pcm, n, g)
+        limRx.aplica(pcm, n, gain)
     }
 
-    /** Multiplica con rodilla suave en los picos, para no recortar. */
-    private fun aplicar(pcm: ShortArray, n: Int, g: Float) {
-        for (i in 0 until n) {
-            val v = pcm[i] * g
-            val a = if (v < 0) -v else v
-            pcm[i] = if (a <= UMBRAL) {
-                v.toInt().toShort()
-            } else {
-                val exceso = a - UMBRAL
-                val comp = UMBRAL + exceso / (1f + exceso / (32700f - UMBRAL))
-                (if (v < 0) -comp else comp).toInt().toShort()
+    /** LIMITADOR POR ENVOLVENTE, en lugar de doblar la onda (1.0.4, 19-nov).
+     *
+     *  El de antes trabajaba muestra a muestra: por encima de un umbral
+     *  comprimía cada muestra por su cuenta. Eso cambia la FORMA de la onda
+     *  —añade armónicos— y es exactamente el sonido «saturado». Éste mira el
+     *  pico de la trama ANTES de tocarla (procesa tramas enteras de 40 ms, así
+     *  que puede) y baja la ganancia de toda la trama lo justo; al soltar
+     *  sube poco a poco, en rampa dentro de la trama, para que no bombee. La
+     *  onda se escala, no se deforma. Sin trigonometría: corre en los POC. */
+    private class Limitador {
+        private var g = 1f
+        fun aplica(pcm: ShortArray, n: Int, ganancia: Float) {
+            var pico = 1f
+            for (i in 0 until n) {
+                val a = Math.abs(pcm[i].toFloat())
+                if (a > pico) pico = a
             }
+            val obj = minOf(1f, TECHO / (pico * ganancia))
+            val ini: Float
+            val fin: Float
+            if (obj < g) { ini = obj; fin = obj }          // ataque: ya, sin pasarse
+            else { ini = g; fin = g + (obj - g) * 0.25f }  // suelta: ~150 ms
+            if (ganancia == 1f && ini >= 0.999f && fin >= 0.999f) { g = fin; return }
+            val paso = (fin - ini) / n
+            for (i in 0 until n) {
+                val v = pcm[i] * ganancia * (ini + paso * i)
+                pcm[i] = v.coerceIn(-32767f, 32767f).toInt().toShort()
+            }
+            g = fin
         }
     }
+    private val limTx = Limitador()
+    private val limRx = Limitador()
 
     /**
      * Nivelador del microfono antes de transmitir.
@@ -400,8 +424,9 @@ class AudioEngine(private val ctx: android.content.Context,
      * evita el bombeo en las pausas. El ruido de fondo (RMS bajo) no se toca:
      * amplificarlo solo sirve para llenar el canal de siseo.
      */
-    private fun nivelar(pcm: ShortArray, n: Int) {
-        if (!agc) return
+    /** Devuelve la ganancia que toca; ya no la aplica (ver `limTx`). */
+    private fun nivelar(pcm: ShortArray, n: Int): Float {
+        if (!agc) return 1f
         var suma = 0.0
         for (i in 0 until n) {
             val v = pcm[i].toDouble()
@@ -409,7 +434,7 @@ class AudioEngine(private val ctx: android.content.Context,
         }
         val rms = Math.sqrt(suma / n)
         if (rms > 250) {
-            val deseada = (OBJETIVO / rms).toFloat().coerceIn(0.4f, 8f)
+            val deseada = (OBJETIVO / rms).toFloat().coerceIn(0.4f, 4f)
             // Subir despacio evita que respire con el ruido de fondo, pero al
             // principio de cada pulsacion deja las primeras palabras bajas: las
             // primeras tramas van deprisa y luego se calma.
@@ -418,7 +443,7 @@ class AudioEngine(private val ctx: android.content.Context,
             val paso = if (deseada < agcGain) 0.35f else if (arranque) 0.30f else 0.06f
             agcGain += (deseada - agcGain) * paso
         }
-        if (agcGain > 1.02f || agcGain < 0.98f) aplicar(pcm, n, agcGain)
+        return agcGain
     }
 
     /** Encola una trama recibida; si el buffer se llena, tira la mas vieja. */
