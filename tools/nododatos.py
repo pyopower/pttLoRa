@@ -41,6 +41,20 @@ PROTO_MAGIC = 0xA1
 CAB_LEN = 8
 T_VOZ, T_INICIO, T_FIN, T_HOLA = 1, 2, 3, 4
 
+# SOLO CODEC2 1200 (19-nov). Lo mismo que filtra el reflector, pero aqui hace
+# falta tambien: lo que entra por este nodo se reparte DIRECTAMENTE a las demas
+# apps conectadas, sin pasar por el reflector. Lote = [modo][n][n x 6 bytes].
+MODO_C2_1200 = 4
+BYTES_TRAMA_1200 = 6
+MAX_TRAMAS_LOTE = 16
+
+
+def lote_1200_valido(carga):
+    if len(carga) < 2 or carga[0] != MODO_C2_1200:
+        return False
+    n = carga[1]
+    return 1 <= n <= MAX_TRAMAS_LOTE and len(carga) == 2 + n * BYTES_TRAMA_1200
+
 CMD_INICIO, CMD_VOZ, CMD_FIN = 0x01, 0x02, 0x03
 CMD_ESTADO, CMD_IDENT, CMD_AIRE = 0x05, 0x0E, 0x11
 EV_INICIO, EV_VOZ, EV_FIN, EV_HOLA, EV_ESTADO = 0x81, 0x82, 0x83, 0x84, 0x85
@@ -341,6 +355,7 @@ class Puente:
         puede = not self.exige_ind
         src = hash_indicativo(ind)
         stream, seq = int(time.time()) & 0xFF, 0
+        codec_malo = False
         d = Desentrama()
         try:
             while True:
@@ -366,9 +381,24 @@ class Puente:
                                 b'para transmitir hace falta tu indicativo '
                                 b'de radioaficionado'))
                         self._echa_fantasmas(sock, ind)
+                    elif tipo == CMD_INICIO and carga and carga[0] != MODO_C2_1200:
+                        # Otro codec: no sale ni al aire ni a nadie. Se le dice
+                        # al usuario, una vez por pasada, por que no se le oye.
+                        codec_malo = True
+                        print('[cliente] %s (%s) codec %d rechazado'
+                              % (direccion[0], ind, carga[0]), flush=True)
+                        sock.sendall(enmarcar(EV_LOG,
+                            b'este servidor solo admite Codec2 1200: '
+                            b'cambia el modo en Ajustes'))
+                    elif tipo in (CMD_VOZ, CMD_FIN) and codec_malo:
+                        if tipo == CMD_FIN:
+                            codec_malo = False
+                    elif tipo == CMD_VOZ and not lote_1200_valido(carga):
+                        continue
                     elif tipo == CMD_INICIO and carga:
                         if not puede:
                             continue
+                        codec_malo = False
                         stream = (stream + 1) & 0xFF
                         seq = 0
                         # El indicativo se cierra con un CERO, igual que en
@@ -447,6 +477,19 @@ def main():
     while True:
         sock, dirn = srv.accept()
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # UN CLIENTE MUERTO NO PUEDE PARAR A LOS DEMAS. `_a_todos` escribe con
+        # el cerrojo cogido, y un movil que se fue sin cerrar (cambio de red,
+        # tunel caido) deja el `sendall` esperando hasta que TCP se rinde, que
+        # por defecto son ~15 min. Con esto se rinde en 20 s y lo echa.
+        for op, v in (('SO_KEEPALIVE', 1),):
+            sock.setsockopt(socket.SOL_SOCKET, getattr(socket, op), v)
+        for op, v in (('TCP_KEEPIDLE', 30), ('TCP_KEEPINTVL', 10),
+                      ('TCP_KEEPCNT', 3), ('TCP_USER_TIMEOUT', 20000)):
+            if hasattr(socket, op):
+                try:
+                    sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, op), v)
+                except OSError:
+                    pass
         threading.Thread(target=p.atiende, args=(sock, dirn), daemon=True).start()
 
 

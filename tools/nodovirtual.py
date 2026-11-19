@@ -90,6 +90,30 @@ CMD_IDENT, CMD_RETO, CMD_FIRMA, CMD_AVISO = 0x30, 0x31, 0x32, 0x33
 CONTEXTO_FIRMA = b'pttlora-enlace-v1:'
 PROTO_MAGIC = 0xA1
 CAB_LEN = 8
+
+# EL CANAL ES CODEC2 1200, Y NADA MAS (19-nov). Un movil con otro modo puesto
+# no solo se oye mal: con 3200 manda 2,7 veces mas bytes por lote, ocupa el
+# canal LoRa de todas las celdas que lo repiten y el que lo recibe tiene que
+# cambiar de codec en mitad del QSO. Se comprueba el modo (primer byte del
+# cuerpo de INICIO y VOZ) y que el lote mida lo que mide a 1200 bps:
+# [modo][n][n x 6 bytes], 6 bytes = 48 bits = 40 ms.
+MODO_C2_1200 = 4
+BYTES_TRAMA_1200 = 6
+MAX_TRAMAS_LOTE = 16
+
+
+def codec_no_valido(tipo, cuerpo):
+    """Motivo para tirar una trama de voz que no es Codec2 1200, o None."""
+    if tipo == T_INICIO:
+        if not cuerpo or cuerpo[0] != MODO_C2_1200:
+            return 'codec %s: solo se admite Codec2 1200' % (cuerpo[0] if cuerpo else '?')
+    elif tipo == T_VOZ:
+        if len(cuerpo) < 2 or cuerpo[0] != MODO_C2_1200:
+            return 'codec %s: solo se admite Codec2 1200' % (cuerpo[0] if cuerpo else '?')
+        n = cuerpo[1]
+        if not 1 <= n <= MAX_TRAMAS_LOTE or len(cuerpo) != 2 + n * BYTES_TRAMA_1200:
+            return 'lote de %d bytes con %d tramas: no es 1200 bps' % (len(cuerpo), n)
+    return None
 T_VOZ, T_INICIO, T_FIN, T_HOLA, T_INFORME = 1, 2, 3, 4, 5
 NOMBRES = {1: 'VOZ', 2: 'INICIO', 3: 'FIN', 4: 'HOLA', 5: 'INFORME'}
 
@@ -680,6 +704,9 @@ class Reflector:
     def filtra_trama(self, t):
         """Motivo para no dejar pasar una trama por lo que ES, venga de donde
         venga (tambien del nodo de datos, que es local), o None."""
+        malo = codec_no_valido(t[2] >> 4, t[CAB_LEN:])
+        if malo:
+            return malo
         src = (t[3] << 16) | (t[4] << 8) | t[5]
         sh = '%06x' % src
         if self.bloqueo('src', sh):

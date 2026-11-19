@@ -425,6 +425,7 @@ class NodoService : Service() {
     @Volatile private var reconectar = true
     @Volatile private var ultimoIntento = 0L
     @Volatile private var ultimoLatido = 0L
+    @Volatile private var ultimoLatidoDatos = 0L
     /** Lo pone la pantalla de ajustes al guardar: la próxima vez que el nodo
      *  diga su estado, se le aplica el indicativo. */
     /** REGISTRO DE ACTIVIDAD.
@@ -654,6 +655,25 @@ class NodoService : Service() {
                    dos caminos, serian dos formas de caerse a la vez. */
                 if (prefs.datosActivo && nodoDatos?.conectado != true)
                     conectaDatos(true)
+                /* ⚠️ Y EL DE DATOS TAMBIÉN PUEDE QUEDARSE MUDO (19-nov).
+                   Al de radio se le vigilaba el silencio y a este no. Un socket
+                   TCP que muere por el camino (cambio de red, túnel, NAT que
+                   olvida la conexión) sigue «conectado» para Android: la app
+                   decía Online y no llegaba nada — ni quién habla ni la voz —
+                   hasta que se pulsaba el PTT, porque solo al ESCRIBIR se
+                   descubre que está roto. Latido cada 15 s (el servidor
+                   contesta su estado) y 45 s sin recibir nada = se rehace. */
+                if (prefs.datosActivo) nodoDatos?.takeIf { it.conectado }?.let { nd ->
+                    if (ahora - ultimoLatidoDatos >= 15000) {
+                        ultimoLatidoDatos = ahora
+                        nd.latido()
+                    }
+                    val ult = nd.ultimoDato
+                    if (ult > 0 && ahora - ult > 45000) {
+                        apunta("🌐 datos mudo 45 s: se rehace")
+                        conectaDatos(true)
+                    }
+                }
             }
         }, "enlace").apply { isDaemon = true; start() }
         wake = (getSystemService(Context.POWER_SERVICE) as PowerManager)
@@ -947,7 +967,9 @@ class NodoService : Service() {
         }
         if (!forzar && nodoDatos?.conectado == true) return
         nodoDatos?.desconecta()
-        val n = Nodo(::evento, { ok, detalle ->
+        /* El estado que contesta el servidor al latido es SUYO, no de una
+           placa: dejarlo pasar pintaria «v-datos …» como si fuera el nodo. */
+        val n = Nodo({ t, p -> if (t != Nodo.EV_ESTADO) evento(t, p) }, { ok, detalle ->
             datosEnlazado = ok
             apunta(if (ok) "🌐 datos · $detalle" else "🌐 datos sin enlace · $detalle")
             if (ok) nodoDatos?.identifica(prefs.indicativo)
