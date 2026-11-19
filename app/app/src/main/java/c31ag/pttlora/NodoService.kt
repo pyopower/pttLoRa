@@ -1278,9 +1278,23 @@ class NodoService : Service() {
                     val suyo = if (campos.size > 1) campos[1] else ""
                     indicativoDelNodo = suyo
                     val sinPoner = suyo.isBlank() || suyo == "NOCALL"
+                    /* ⚠️ Y EL PAPEL TAMBIÉN (19-nov). Solo se mandaba si el
+                       indicativo era distinto, y `configura` es la única orden
+                       que lleva el papel: con el indicativo ya puesto, elegir
+                       «Repetidor fijo» y Guardar se quedaba en el móvil y la
+                       placa seguía en `auto` — no salía como celda en ningún
+                       sitio. Se compara con el `perfil=` que dice el estado. */
+                    val suPerfil = when (campos.firstOrNull { it.startsWith("perfil=") }
+                                             ?.substringAfter('=')) {
+                        "repetidor-fijo" -> Prefs.PERFIL_FIJO
+                        "solo-nodo" -> Prefs.PERFIL_SOLO
+                        "auto" -> Prefs.PERFIL_AUTO
+                        else -> -1
+                    }
                     if ((sinPoner || ponIndicativo) && prefs.indicativo.isNotBlank()) {
+                        val porPapel = ponIndicativo && suPerfil >= 0 && suPerfil != prefs.perfil
                         ponIndicativo = false
-                        if (suyo != prefs.indicativo.uppercase())
+                        if (suyo != prefs.indicativo.uppercase() || porPapel)
                             nodo?.configura(prefs.canalLogico, prefs.saltos,
                                             prefs.potencia, prefs.perfil,
                                             prefs.indicativo)
