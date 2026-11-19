@@ -295,7 +295,28 @@ class Igate:
             log('⚠ el servidor dice UNVERIFIED: el passcode no cuadra con %s, '
                 'y todo lo que se mande se tirara en silencio' % self.llamada)
         s.settimeout(None)
+        threading.Thread(target=self._vacia_aprs, args=(s,), daemon=True).start()
         return s
+
+    def _vacia_aprs(self, s):
+        # Aunque `filter t/m` no pida nada, el servidor manda un comentario de
+        # keepalive cada 20 s. Si nadie lo lee se acumula en el socket (97 KB
+        # en 13 h, visto el 19-nov) hasta que el servidor da al cliente por
+        # muerto. Se lee y se tira; y si el servidor cierra, se sabe ya y no
+        # al ir a mandar la siguiente baliza.
+        try:
+            while s.recv(4096):
+                pass
+        except Exception:
+            pass
+        with self.lock:
+            if self.aprs is s:
+                log('APRS-IS cerro la conexion; se reabre con la siguiente')
+                try:
+                    s.close()
+                except Exception:
+                    pass
+                self.aprs = None
 
     def manda_aprs(self, linea):
         if not self.enviar:
