@@ -114,7 +114,8 @@ puerto.</strong> Tarda menos de un minuto.</p>
 </div>
 
 <h2 id="configurar">Configurar la placa</h2>
-<p>Con la placa por USB se le puede poner <strong>el indicativo</strong> y, en el
+<p>Con la placa por USB se le puede poner <strong>el indicativo</strong>,
+<strong>el papel</strong> (para que sea una celda) y, en el
 firmware del transceptor, <strong>elegir el micro Bluetooth</strong>. Sirve
 también para una placa ya grabada: no borra nada.</p>
 
@@ -128,6 +129,18 @@ también para una placa ya grabada: no borra nada.</p>
   <div class="fila">
     <input id="i-indicativo" maxlength="12" placeholder="EA1ABC" disabled>
     <button id="b-indicativo" disabled>Guardar</button>
+  </div>
+
+  <h2 style="margin-top:1rem">Papel del nodo</h2>
+  <p>Para una <strong>celda</strong> (nodo fijo en alto, con o sin Internet) elige
+  <strong>Repetidor fijo</strong>: repite siempre y se anuncia como celda.</p>
+  <div class="fila">
+    <select id="s-papel" disabled>
+      <option value="0">Automático (recomendado para llevar con el móvil)</option>
+      <option value="1">Repetidor fijo · celda</option>
+      <option value="2">Solo mi radio (no repite)</option>
+    </select>
+    <button id="b-papel" disabled>Guardar</button>
   </div>
 
   <h2 style="margin-top:1rem">Micro Bluetooth <span style="opacity:.6">(firmware transceptor)</span></h2>
@@ -220,7 +233,7 @@ esto es para radioaficionados con licencia.</p>
   }
 
   function habilita(si) {
-    for (const id of ['i-indicativo', 'b-indicativo', 'b-buscar', 'b-olvidar']) $(id).disabled = !si;
+    for (const id of ['i-indicativo', 'b-indicativo', 's-papel', 'b-papel', 'b-buscar', 'b-olvidar']) $(id).disabled = !si;
   }
 
   async function manda(tipo, datos = []) {
@@ -256,7 +269,12 @@ esto es para radioaficionados con licencia.</p>
   function estado(txt) {
     const m = txt.match(/^v(\S+?)\(.*?\) (\S+) .*?canal=(\d+) saltos=(\d+)/);
     if (!m) return;
-    est = { version: m[1], indicativo: m[2], canal: +m[3], saltos: +m[4] };
+    const pf = (txt.match(/ perfil=(\S+)/) || [])[1];
+    const pot = (txt.match(/ (\d+)dBm hw=/) || [])[1];
+    est = { version: m[1], indicativo: m[2], canal: +m[3], saltos: +m[4],
+            perfil: pf === 'repetidor-fijo' ? 1 : pf === 'solo-nodo' ? 2 : pf === 'auto' ? 0 : -1,
+            potencia: pot ? +pot : 0 };
+    if (est.perfil >= 0 && document.activeElement !== $('s-papel')) $('s-papel').value = String(est.perfil);
     $('cfg-estado').textContent = 'conectado · firmware v' + est.version + ' · ' + est.indicativo;
     if (document.activeElement !== $('i-indicativo'))
       $('i-indicativo').value = est.indicativo === 'NOCALL' ? '' : est.indicativo;
@@ -354,6 +372,17 @@ esto es para radioaficionados con licencia.</p>
     if (!est) return;
     await manda(0x04, [est.canal, est.saltos, ...new TextEncoder().encode(ind)]);
     apunta('indicativo enviado: ' + ind);
+  };
+
+  /* EL PAPEL va en CMD_CONFIG detras de la potencia: [canal][saltos][potencia][perfil][indicativo].
+     Se reenvia todo lo demas tal cual lo dijo el estado, asi que solo cambia el papel. */
+  $('b-papel').onclick = async () => {
+    if (!est) return;
+    if (!(est.potencia >= 2 && est.potencia <= 17)) { alert('No se pudo leer la potencia de la placa: vuelve a conectar.'); return; }
+    const p = +$('s-papel').value;
+    const ind = est.indicativo === 'NOCALL' ? [] : [...new TextEncoder().encode(est.indicativo)];
+    await manda(0x04, [est.canal, est.saltos, est.potencia, p, ...ind]);
+    apunta('papel enviado: ' + $('s-papel').selectedOptions[0].textContent);
   };
 
   $('b-buscar').onclick = async () => {
