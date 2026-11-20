@@ -86,7 +86,8 @@ class MainActivity : Activity(), NodoService.Observador {
             fondoPtt.frac = quedan.toFloat() / NodoService.TOT_S
             // Los últimos diez segundos se cuentan hacia atrás: ahí lo que hace
             // falta saber no es cuánto llevas, es que te van a cortar.
-            bPtt.text = if (quedan in 0..10) "CORTE EN ${quedan}s"
+            bPtt.text = if (NodoService.instancia?.sinAcuse == true) "⚠️ NO TE LLEGA   ${seg}s"
+                        else if (quedan in 0..10) "CORTE EN ${quedan}s"
                         else "TRANSMITIENDO   ${seg}s"
             ui.postDelayed(this, 200)
         }

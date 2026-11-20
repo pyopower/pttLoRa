@@ -478,6 +478,24 @@ class NodoService : Service() {
 
     @Volatile var transmitiendo = false; private set
     @Volatile var canalOcupado = false; private set
+    /* EL CANAL LO PUEDEN DECIR DOS: la placa (lo que oye por la antena) y el
+       servidor de datos (quién tiene el turno en la red, 20-nov). Sin el del
+       servidor, en modo sin placa el botón seguía en verde mientras hablaba
+       otro. Ocupado si lo dice cualquiera de los dos. */
+    @Volatile private var canalRf = false
+    @Volatile private var canalRed = false
+
+    /* «¿ME ESTÁN OYENDO?» (20-nov). El servidor de datos manda un acuse por
+       segundo mientras le llega tu voz, por Internet o por una celda. Si se
+       transmite y en 3 s no llega ninguno, la red no te oye: se avisa con
+       pitido, vibración y el texto del botón. Solo donde el servidor acusa
+       (`servidorAcusa`): uno viejo no manda nada y avisaría siempre. */
+    @Volatile private var servidorAcusa = false
+    @Volatile private var ultimoAcuse = 0L
+    @Volatile var sinAcuse = false; private set
+    @Volatile private var sinAcuseVisto = false
+    private var tAvisoAcuse = 0L
+    private var bipTot = -1
     @Volatile var enlazado = false; private set
     @Volatile var pideCodigo = false; private set
     /** [fmin, fmax, pmin, pmax] tal y como los publica el nodo en su estado. */
@@ -547,6 +565,7 @@ class NodoService : Service() {
                    vigía del PTT y el micro listo no dependen de la placa: antes
                    vivían dentro de `if (enlazado)` y solo por datos la voz
                    recibida no se cerraba nunca. */
+                if (transmitiendo) vigilaTx(ahora)
                 if (enlazado || datosEnlazado) {
                     /* QUIEN CIERRA UNA RECEPCION ES EL RELOJ.
                        Dos motivos para cerrar, y ninguno es "ha llegado el FIN":
@@ -925,7 +944,8 @@ class NodoService : Service() {
                  * expresamente (Guardar en los ajustes, o Aplicar en Radio). */
                 nodo?.identifica(prefs.indicativo)
             } else {
-                canalOcupado = false
+                canalRf = false
+                canalOcupado = canalRed
                 pttDeOtro = null
                 /* Y SE OLVIDA EL CODIGO PENDIENTE.
                    El codigo lo genera el nodo para UNA sesion: si el enlace se
@@ -974,8 +994,12 @@ class NodoService : Service() {
         nodoDatos?.desconecta()
         /* El estado que contesta el servidor al latido es SUYO, no de una
            placa: dejarlo pasar pintaria «v-datos …» como si fuera el nodo. */
-        val n = Nodo({ t, p -> if (t != Nodo.EV_ESTADO) evento(t, p) }, { ok, detalle ->
+        val n = Nodo(::eventoDatos, { ok, detalle ->
             datosEnlazado = ok
+            if (!ok) {
+                servidorAcusa = false
+                if (canalRed) { canalRed = false; canalCambia() }
+            }
             apunta(if (ok) "🌐 datos · $detalle" else "🌐 datos sin enlace · $detalle")
             if (ok) nodoDatos?.identifica(prefs.indicativo)
             if (!enlazado) notifica(if (!ok) "Sin enlace"
@@ -1118,6 +1142,35 @@ class NodoService : Service() {
     }
 
     // ------------------------------------------------------------ eventos ---
+    /** Lo que llega del servidor de datos. Casi todo es lo mismo que de la
+     *  placa; aparte van el canal (es el de la red, no el de la antena), el
+     *  acuse y el estado (es del servidor y pintaría «v-datos» como placa). */
+    private fun eventoDatos(tipo: Int, p: ByteArray) {
+        when (tipo) {
+            Nodo.EV_ESTADO -> {}
+            Nodo.EV_ACUSE -> {
+                servidorAcusa = true
+                if (p.isNotEmpty() && (p[0].toInt() and 0xFF) != 0xFF)
+                    ultimoAcuse = System.currentTimeMillis()
+            }
+            Nodo.EV_CANAL -> {
+                canalRed = p.isNotEmpty() && p[0].toInt() != 0
+                canalCambia()
+            }
+            else -> evento(tipo, p)
+        }
+    }
+
+    private fun canalCambia() {
+        canalOcupado = canalRf || canalRed
+        observador?.onCanal(canalOcupado)
+        if (!canalOcupado) {
+            ultimoQueHabla = null
+            observador?.onQuienHabla(null, 0)
+            observador?.onSenal(127)
+        }
+    }
+
     private fun evento(tipo: Int, p: ByteArray) {
         ota?.alEvento(tipo, p)
         /* Cualquier cosa que entre por la antena mantiene viva la radio. Se
@@ -1130,13 +1183,8 @@ class NodoService : Service() {
         }
         when (tipo) {
             Nodo.EV_CANAL -> {
-                canalOcupado = p.isNotEmpty() && p[0].toInt() != 0
-                observador?.onCanal(canalOcupado)
-                if (!canalOcupado) {
-                    ultimoQueHabla = null
-                    observador?.onQuienHabla(null, 0)
-                    observador?.onSenal(127)
-                }
+                canalRf = p.isNotEmpty() && p[0].toInt() != 0
+                canalCambia()
             }
             Nodo.EV_INICIO -> if (p.size >= 8) {
                 val rssi = p[0].toInt()
@@ -1559,6 +1607,36 @@ class NodoService : Service() {
      *  datos que da la redundancia, usado cuando el otro no está. */
     private fun hayPorDondeHablar() = enlazado || datosEnlazado
 
+    /** Lo que se vigila mientras se habla, cada 200 ms desde el hilo del
+     *  enlace (vale con la pantalla apagada). */
+    private fun vigilaTx(ahora: Long) {
+        /* CUENTA ATRÁS DEL TOT, DE OÍDO (20-nov, petición del usuario): un
+           pitido por segundo los últimos diez. El botón ya lo cuenta, pero con
+           el móvil en el bolsillo o con el micro Bluetooth no se ve. */
+        val quedan = TOT_S - ((ahora - t0Tx) / 1000L).toInt()
+        if (quedan in 1..10 && quedan != bipTot) {
+            bipTot = quedan
+            audio?.bipTot()
+        }
+        if (!servidorAcusa || !datosEnlazado || ahora - t0Tx < 3000) return
+        val mudo = ahora - maxOf(t0Tx, ultimoAcuse) > 3000
+        if (mudo && (!sinAcuse || ahora - tAvisoAcuse > 5000)) {
+            if (!sinAcuse) {
+                apunta("⚠️ la red NO te oye: hace 3 s que no le llega tu voz")
+                observador?.onLog("⚠️ no te llega: la red no te oye")
+            }
+            sinAcuse = true
+            sinAcuseVisto = true
+            tAvisoAcuse = ahora
+            audio?.alerta()
+            Vibra.buzz(this, 400)
+        } else if (!mudo && sinAcuse) {
+            sinAcuse = false
+            apunta("✅ vuelve a llegarte la voz a la red")
+            observador?.onLog("vuelve a llegarte")
+        }
+    }
+
     fun tomaPtt() {
         if (transmitiendo || !hayPorDondeHablar()) return
         /* ⚠️ DOBLE TOQUE RAPIDO: la transmision anterior puede seguir vaciando
@@ -1629,6 +1707,7 @@ class NodoService : Service() {
         transmitiendo = true
         t0Tx = System.currentTimeMillis()
         txPorRf = false; txPorNet = false
+        bipTot = -1; sinAcuse = false; sinAcuseVisto = false
         mandaPorTodos(Nodo.CMD_INICIO, byteArrayOf(modo.toByte()))
         Vibra.buzz(this, 30)
         observador?.onTx(true)
@@ -1697,6 +1776,9 @@ class NodoService : Service() {
                    .format(rec) + "o baja la ganancia en Ajustes → Micrófono")
             observador?.onLog("micrófono saturando (%.1f%%)".format(rec))
         }
+        if (sinAcuseVisto)
+            apunta("⚠️ en esta pasada la red dejó de oírte un rato")
+        sinAcuse = false
         apuntaLoMio(seg, txPorRf)
     }
 

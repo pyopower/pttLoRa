@@ -480,6 +480,9 @@ class AudioEngine(private val ctx: android.content.Context,
      *  Sin cola de silencio porque la voz viene detras y ya lo empuja. */
     fun beepRx() = tono(1600.0, 60, 7000, cola = 1)
 
+    /** Cuenta atrás del TOT: un toque corto por segundo los últimos diez. */
+    fun bipTot() = tono(1000.0, 50, 6000, cola = 1)
+
     /**
      * Aviso de "te estan llamando": tres parejas de tonos, fuerte y largo.
      *

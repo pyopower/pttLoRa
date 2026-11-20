@@ -59,6 +59,20 @@ CMD_INICIO, CMD_VOZ, CMD_FIN = 0x01, 0x02, 0x03
 CMD_ESTADO, CMD_IDENT, CMD_AIRE = 0x05, 0x0E, 0x11
 EV_INICIO, EV_VOZ, EV_FIN, EV_HOLA, EV_ESTADO = 0x81, 0x82, 0x83, 0x84, 0x85
 EV_LOG = 0x8F
+EV_CANAL, EV_PTT = 0x86, 0x89
+# ACUSE (20-nov): «tu voz esta llegando a la red». Lo manda este nodo al que
+# habla, como mucho uno por segundo: [0] = la recibo por Internet, de tu propio
+# socket; [1] = la recibo del reflector, o sea que alguna celda te esta oyendo
+# por radio; [0xFF] = al identificarse, «este servidor acusa», para que la app
+# solo eche en falta el acuse donde lo hay.
+EV_ACUSE = 0x8C
+ACUSE_RED, ACUSE_RADIO, ACUSE_HAY = 0, 1, 0xFF
+PTT_DE_OTRO = 2
+# EL TURNO (20-nov). El reflector arbitra, pero lo que entra por AQUI se le
+# reparte a las demas apps directamente, sin pasar por el: dos moviles sin placa
+# podian hablar a la vez y oirse pisados. Se suelta con el FIN, a los 2,5 s sin
+# voz (se fue sin despedirse) o a los 75 s (el TOT de la app es 60).
+TURNO_MUDO_S, TURNO_TOT_S = 2.5, 75.0
 
 RSSI_INTERNET = 127          # ver la nota de arriba
 SALTOS = 3
@@ -194,7 +208,13 @@ class Puente:
         self.hablando = {}            # (src, stream) -> indicativo, y cuando
         self.cerrojo = threading.Lock()
         self.enlace = None
+        # dict: ind, clave (src, stream), sock (None = vino del reflector),
+        # t0, ult e inicio (el EV_INICIO ya enmarcado, para quien entre tarde)
+        self.turno = None
+        self.cerrojo_turno = threading.Lock()
+        self.acusado = {}             # indicativo -> ultimo acuse mandado
         threading.Thread(target=self._al_reflector, daemon=True).start()
+        threading.Thread(target=self._vigila_turno, daemon=True).start()
 
     # ------------------------------------------------------- al reflector --
     def _al_reflector(self):
@@ -231,6 +251,122 @@ class Puente:
             return False
 
     # ---------------------------------------------------- a los clientes ---
+    # ------------------------------------------------------------ el turno --
+    @staticmethod
+    def _base(ind):
+        t = (ind or '').strip().upper().split()
+        return t[0] if t else ''
+
+    def _canal(self, ocupado, salvo_ind=None):
+        self._a_todos(enmarcar(EV_CANAL, bytes([1 if ocupado else 0])),
+                      no_para=salvo_ind)
+
+    def toma_turno(self, ind, clave, sock, inicio):
+        """True si `ind` puede hablar. Mismo indicativo = mismo dueño: una
+        persona que entra a la vez por su placa y por aqui no se pisa a si
+        misma."""
+        ahora = time.time()
+        with self.cerrojo_turno:
+            q = self.turno
+            if q and self._base(q['ind']) != self._base(ind):
+                return False, q['ind']
+            nuevo = q is None
+            self.turno = {'ind': ind, 'clave': clave, 'sock': sock,
+                          't0': q['t0'] if q and q['clave'] == clave else ahora, 'ult': ahora,
+                          'inicio': inicio}
+        if nuevo:
+            self._canal(True, salvo_ind=ind)
+        return True, None
+
+    def toca_turno(self, ind):
+        with self.cerrojo_turno:
+            q = self.turno
+            if q and self._base(q['ind']) == self._base(ind):
+                q['ult'] = time.time()
+                return True
+        return False
+
+    def suelta_turno(self, ind, clave=None):
+        with self.cerrojo_turno:
+            q = self.turno
+            if not q or self._base(q['ind']) != self._base(ind):
+                return
+            if clave is not None and q['clave'] != clave:
+                return
+            self.turno = None
+        self._canal(False)
+
+    def _vigila_turno(self):
+        while True:
+            time.sleep(0.5)
+            ahora = time.time()
+            with self.cerrojo_turno:
+                q = self.turno
+                caduca = q and (ahora - q['ult'] > TURNO_MUDO_S or
+                                ahora - q['t0'] > TURNO_TOT_S)
+                if caduca:
+                    self.turno = None
+            if caduca:
+                print('[turno] %s: caducado (%s)' % (q['ind'],
+                      'mudo' if ahora - q['ult'] > TURNO_MUDO_S else 'TOT'),
+                      flush=True)
+                self._canal(False)
+
+    def presenta_turno(self, sock, ind):
+        """Quien entra con un QSO en marcha recibe el INICIO de la pasada
+        en curso. Sin el, la app tira toda la voz que le llega (no sabe de
+        quien es, y sin indicativo no puede filtrar su propio eco), y no oia
+        nada hasta la pasada siguiente."""
+        with self.cerrojo_turno:
+            q = self.turno
+            if not q or self._base(q['ind']) == self._base(ind):
+                return
+            ini = q['inicio']
+        try:
+            sock.sendall(enmarcar(EV_CANAL, b'\x01'))
+            if ini:
+                sock.sendall(ini)
+        except Exception:
+            pass
+
+    def acusa(self, ind, via):
+        """Le dice al que habla que su voz esta llegando, una vez por segundo."""
+        b = self._base(ind)
+        if not b:
+            return
+        ahora = time.time()
+        if ahora - self.acusado.get(b, 0) < 1.0:
+            return
+        self.acusado[b] = ahora
+        m = enmarcar(EV_ACUSE, bytes([via]))
+        with self.cerrojo:
+            destinos = [c for c in self.clientes
+                        if self._base(self.quien.get(c, '')) == b]
+        for c in destinos:
+            try:
+                c.sendall(m)
+            except Exception:
+                pass
+
+    def _le_quitan(self, ganador):
+        """El reflector ha dado el turno a otro mientras aqui hablaba uno de
+        los nuestros: el reflector manda (es el que ve toda la red), asi que se
+        le dice al de aqui que pare."""
+        with self.cerrojo_turno:
+            q = self.turno
+            if not q or q['sock'] is None or \
+                    self._base(q['ind']) == self._base(ganador):
+                return
+            perdedor = q['sock']
+            q['sock'] = None
+            q['ind'] = ganador
+        print('[turno] el reflector da el turno a %s' % ganador, flush=True)
+        try:
+            perdedor.sendall(enmarcar(EV_PTT, bytes([PTT_DE_OTRO]) +
+                                      ganador.encode('ascii', 'ignore')))
+        except Exception:
+            pass
+
     def _aire_a_clientes(self, b):
         """Trama del aire -> evento de cliente. Es la traduccion de verdad."""
         if b[0] != PROTO_MAGIC:
@@ -245,10 +381,25 @@ class Puente:
             ev, carga = EV_INICIO, r + cuerpo
             # Quien habla, para no devolverle su propia voz. Ver `_a_todos`.
             self._apunta_quien(src, stream, cuerpo[1:])
+            q = self._de_quien(src, stream)
+            if q:
+                ok, _ = self.toma_turno(q, (bytes(src), stream), None,
+                                        enmarcar(ev, carga))
+                if not ok:
+                    self._le_quitan(q)
+                    self.toma_turno(q, (bytes(src), stream), None,
+                                    enmarcar(ev, carga))
         elif tipo == T_VOZ:
             ev, carga = EV_VOZ, r + bytes([seq]) + cuerpo
+            q = self._de_quien(src, stream)
+            if q:
+                self.toca_turno(q)
+                self.acusa(q, ACUSE_RADIO)
         elif tipo == T_FIN:
             ev, carga = EV_FIN, src + bytes([stream])
+            q = self._de_quien(src, stream)
+            if q:
+                self.suelta_turno(q, (bytes(src), stream))
         elif tipo == T_HOLA:
             ev, carga = EV_HOLA, r + cuerpo
         else:
@@ -356,6 +507,7 @@ class Puente:
         src = hash_indicativo(ind)
         stream, seq = int(time.time()) & 0xFF, 0
         codec_malo = False
+        denegado = False              # esta pasada no tiene el turno
         d = Desentrama()
         try:
             while True:
@@ -381,6 +533,8 @@ class Puente:
                                 b'para transmitir hace falta tu indicativo '
                                 b'de radioaficionado'))
                         self._echa_fantasmas(sock, ind)
+                        sock.sendall(enmarcar(EV_ACUSE, bytes([ACUSE_HAY])))
+                        self.presenta_turno(sock, ind)
                     elif tipo == CMD_INICIO and carga and carga[0] != MODO_C2_1200:
                         # Otro codec: no sale ni al aire ni a nadie. Se le dice
                         # al usuario, una vez por pasada, por que no se le oye.
@@ -401,6 +555,18 @@ class Puente:
                         codec_malo = False
                         stream = (stream + 1) & 0xFF
                         seq = 0
+                        s3 = cabecera(0, src, 0, 0)[3:6]
+                        ev_ini = enmarcar(EV_INICIO,
+                            bytes([RSSI_INTERNET, 0]) + s3 + bytes([stream]) +
+                            bytes([carga[0]]) + ind.encode('ascii', 'ignore') + b'\0')
+                        ok, dueño = self.toma_turno(ind, (s3, stream), sock, ev_ini)
+                        denegado = not ok
+                        if denegado:
+                            print('[turno] %s pide y habla %s: denegado'
+                                  % (ind, dueño), flush=True)
+                            sock.sendall(enmarcar(EV_PTT, bytes([PTT_DE_OTRO]) +
+                                                  dueño.encode('ascii', 'ignore')))
+                            continue
                         # El indicativo se cierra con un CERO, igual que en
                         # el firmware (v1.42): un byte que impide que nada se
                         # lea pegado detras. Ver la nota de CMD_INICIO en
@@ -412,8 +578,13 @@ class Puente:
                             bytes([RSSI_INTERNET, 0]) + t[3:6] + bytes([stream]) +
                             t[CAB_LEN:]), salvo=sock, no_para=ind)
                     elif tipo == CMD_VOZ and len(carga) >= 2:
-                        if not puede:
+                        if not puede or denegado:
                             continue
+                        if not self.toca_turno(ind):
+                            # Se lo ha quitado el reflector a media pasada.
+                            denegado = True
+                            continue
+                        self.acusa(ind, ACUSE_RED)
                         seq = (seq + 1) & 0xFF
                         t = cabecera(T_VOZ, src, stream, seq, self.canal) + carga
                         self.manda_al_aire(t)
@@ -423,6 +594,10 @@ class Puente:
                     elif tipo == CMD_FIN:
                         if not puede:
                             continue
+                        if denegado:
+                            denegado = False
+                            continue
+                        self.suelta_turno(ind, (cabecera(0, src, 0, 0)[3:6], stream))
                         seq = (seq + 1) & 0xFF
                         t = cabecera(T_FIN, src, stream, seq, self.canal)
                         self.manda_al_aire(t)
@@ -430,10 +605,11 @@ class Puente:
                             t[3:6] + bytes([stream])), salvo=sock, no_para=ind)
                     elif tipo == CMD_ESTADO:
                         txt = ('v-datos %s perfil=nodo-de-datos canal=%d '
-                               'enlace=%s clientes=%d ptt=libre'
+                               'enlace=%s clientes=%d ptt=%s'
                                % (ind, self.canal,
                                   'en pie' if self.enlace else 'caido',
-                                  len(self.clientes)))
+                                  len(self.clientes),
+                                  (self.turno or {}).get('ind') or 'libre'))
                         sock.sendall(enmarcar(EV_ESTADO, txt.encode('utf-8')))
         except Exception:
             pass

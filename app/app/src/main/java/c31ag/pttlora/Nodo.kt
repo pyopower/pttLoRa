@@ -79,6 +79,10 @@ class Nodo(private val onEvento: (Int, ByteArray) -> Unit,
         const val EV_EMPAREJA = 0x87
         const val EV_PTT = 0x89
         const val EV_RED = 0x8A
+        /** Solo del servidor de datos: «tu voz está llegando a la red».
+         *  [0] por Internet, [1] por radio (la oye una celda), [0xFF] al
+         *  conectar, para decir que este servidor acusa. */
+        const val EV_ACUSE = 0x8C
         const val EV_OTA = 0x88
         const val EV_LOG = 0x8F
 
