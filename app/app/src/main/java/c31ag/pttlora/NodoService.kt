@@ -484,6 +484,11 @@ class NodoService : Service() {
        otro. Ocupado si lo dice cualquiera de los dos. */
     @Volatile private var canalRf = false
     @Volatile private var canalRed = false
+    /* Y UN TERCERO: LO QUE SE ESTÁ OYENDO (20-nov). La placa solo marca
+       ocupado con voz oída por la ANTENA: si la voz entra por Internet, o la
+       radio trae huecos de más de 1,5 s, decía «libre» con alguien hablando y
+       el botón seguía verde. Mientras haya una recepción abierta, ocupado. */
+    @Volatile private var canalRx = false
 
     /* «¿ME ESTÁN OYENDO?» (20-nov). El servidor de datos manda un acuse por
        segundo mientras le llega tu voz, por Internet o por una celda. Si se
@@ -945,7 +950,7 @@ class NodoService : Service() {
                 nodo?.identifica(prefs.indicativo)
             } else {
                 canalRf = false
-                canalOcupado = canalRed
+                canalOcupado = canalRed || canalRx
                 pttDeOtro = null
                 /* Y SE OLVIDA EL CODIGO PENDIENTE.
                    El codigo lo genera el nodo para UNA sesion: si el enlace se
@@ -1162,7 +1167,7 @@ class NodoService : Service() {
     }
 
     private fun canalCambia() {
-        canalOcupado = canalRf || canalRed
+        canalOcupado = canalRf || canalRed || canalRx
         observador?.onCanal(canalOcupado)
         if (!canalOcupado) {
             ultimoQueHabla = null
@@ -1431,6 +1436,7 @@ class NodoService : Service() {
                 preparaAudioRx()
                 rxQuien = ind; rxLotes = 0; rxModo = modo; rxT0 = System.currentTimeMillis()
                 rxRssiMin = rssi; rxRssiMax = rssi
+                if (!canalRx) { canalRx = true; canalCambia() }
             }
             Nodo.EV_FIN -> cierraRx()
         }
@@ -1472,6 +1478,7 @@ class NodoService : Service() {
         }
         rxQuien = null
         finVisto = 0L
+        if (canalRx) { canalRx = false; canalCambia() }
         observador?.onSenal(127)           // se acabó: la aguja vuelve a cero
         synchronized(ventana) { ventana.clear(); vSiguiente = 1; vMayor = 0 }
     }

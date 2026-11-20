@@ -272,6 +272,13 @@ class Prefs(ctx: Context) {
         get() = p.getBoolean("mic_agc", true)
         set(v) = p.edit().putBoolean("mic_agc", v).apply()
 
+    /** Pantalla siempre encendida con la app delante (20-nov). Hablando se
+     *  mantiene encendida siempre; esto es para quien la quiere fija también
+     *  escuchando. */
+    var pantallaFija: Boolean
+        get() = p.getBoolean("pantalla_fija", false)
+        set(v) = p.edit().putBoolean("pantalla_fija", v).apply()
+
     /** Ganancia de reproducción, índice de AudioEngine.GANANCIAS. */
     var ganancia: Int
         get() = p.getInt("ganancia", 1)

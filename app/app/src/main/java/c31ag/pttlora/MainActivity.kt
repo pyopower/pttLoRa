@@ -493,7 +493,10 @@ class MainActivity : Activity(), NodoService.Observador {
             val cCrudo = android.widget.CheckBox(this)
             cCrudo.text = "Micrófono crudo (sin el procesado del sistema)"
             cCrudo.isChecked = prefs.micCrudo
-            col.addView(cAgc); col.addView(cCrudo)
+            val cPantalla = android.widget.CheckBox(this)
+            cPantalla.text = "Pantalla siempre encendida (hablando lo está siempre)"
+            cPantalla.isChecked = prefs.pantallaFija
+            col.addView(cAgc); col.addView(cCrudo); col.addView(cPantalla)
             AlertDialog.Builder(this)
                 .setTitle("Micrófono")
                 .setMessage("Si te oyen la voz rota, casi siempre es que el " +
@@ -504,6 +507,8 @@ class MainActivity : Activity(), NodoService.Observador {
                 .setPositiveButton("Elegir ganancia…") { _, _ ->
                     prefs.micAgc = cAgc.isChecked
                     prefs.micCrudo = cCrudo.isChecked
+                    prefs.pantallaFija = cPantalla.isChecked
+                    aplicaPantalla(NodoService.instancia?.transmitiendo == true)
                     AlertDialog.Builder(this)
                         .setTitle("Ganancia del micrófono")
                         .setItems(AudioEngine.MIC_NOMBRES) { _, i ->
@@ -514,6 +519,8 @@ class MainActivity : Activity(), NodoService.Observador {
                 .setNegativeButton("Guardar") { _, _ ->
                     prefs.micAgc = cAgc.isChecked
                     prefs.micCrudo = cCrudo.isChecked
+                    prefs.pantallaFija = cPantalla.isChecked
+                    aplicaPantalla(NodoService.instancia?.transmitiendo == true)
                     bMicro.text = textoMicro()
                 }.show()
         }
@@ -1651,8 +1658,18 @@ class MainActivity : Activity(), NodoService.Observador {
         }
     } }
 
+    /* LA PANTALLA NO SE APAGA HABLANDO (20-nov). En algunos Xiaomi, al
+       apagarse la pantalla a media pasada el sistema le quita el micro a la
+       app y la transmisión se corta. Transmitiendo se mantiene encendida
+       siempre; con «Pantalla siempre encendida», también escuchando. */
+    private fun aplicaPantalla(tx: Boolean) {
+        val f = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        if (tx || prefs.pantallaFija) window.addFlags(f) else window.clearFlags(f)
+    }
+
     override fun onTx(transmitiendo: Boolean) { ui.post {
         ui.removeCallbacks(relojTx)
+        aplicaPantalla(transmitiendo)
         if (transmitiendo) {
             /* Transmitiendo no se recibe, así que el S-metro no tendría nada
                que enseñar: el mismo instrumento pasa a VATÍMETRO y marca los
@@ -1669,6 +1686,11 @@ class MainActivity : Activity(), NodoService.Observador {
             fondoPtt.modo = PttFondo.Modo.LIBRE
             fondoPtt.frac = 1f          // el depósito vuelve a estar lleno
             bPtt.text = "PULSAR PARA HABLAR"
+            // Al soltar puede que ya esté hablando otro: que se vea.
+            if (NodoService.instancia?.canalOcupado == true) {
+                fondoPtt.modo = PttFondo.Modo.OCUPADO
+                bPtt.text = "CANAL OCUPADO"
+            }
         }
     } }
 
