@@ -370,6 +370,16 @@ def main():
         elif sub == 'wifi':
             datos = bytes([10]) + (bytes([int(pos[2])]) if len(pos) > 2 else b'')
             espera = 2
+        elif sub == 'micro':
+            # `audio micro` = ver; `audio micro 3` = ganancia fija x3; `audio micro auto`
+            v = pos[2] if len(pos) > 2 else None
+            if v == 'hw':
+                # `audio micro hw 8`: ganancia del preamplificador del propio micro (0-15)
+                datos = bytes([13]) + (bytes([int(pos[3])]) if len(pos) > 3 else b'')
+            else:
+                datos = bytes([12]) + (b'' if v is None else bytes([0 if v == 'auto' else
+                                   max(1, min(255, int(round(float(v) * 10))))]))
+            espera = 1.5
         elif sub == 'boton':
             datos = bytes([9]) + (bytes([int(pos[2])]) if len(pos) > 2 else b'')
             espera = 1.5

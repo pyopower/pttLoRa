@@ -219,33 +219,116 @@ void hfp_escribe(const short *pcm, int n)
 }
 
 /* NIVELES DEL MICRO. El del JBL llega unos 30 dB por debajo de lo que Codec2
-   necesita (RMS 60-200 hablando, frente a 2.000-5.000 de una voz normal). Así
-   que CONTROL AUTOMÁTICO DE GANANCIA hacia RMS 3.000: baja rápido si se pasa
-   (hablar pegado) y sube despacio; con silencio no sube, para no convertir el
-   ruido de fondo en un soplido. */
-static float g_mic = 8.0f;
+   necesita (RMS 60-200 hablando, frente a 2.000-5.000 de una voz normal); el
+   del Abbree, mucho más alto. Así que hay control automático de ganancia.
+
+   ⚠️ REHECHO EL 20-NOV, COMO EL DE LA APP 1.0.8. El de antes llevaba CADA
+   trama de voz a RMS 3.000 (-21 dBFS): comprimía todo al mismo nivel, justo
+   por encima de donde Codec2 1200 satura (mediana a más de -22 dBFS), y
+   arrancaba en ×8. Con el Abbree la voz salía rota. Ahora:
+     - el nivel que se mira es el de las SÍLABAS FUERTES (sube al instante,
+       baja despacio), y ésas van a RMS 2.500 (-22 dBFS): la mediana queda en
+       -26/-30 dBFS, con margen;
+     - la ganancia baja como mucho 0,5 dB por trama y sube 0,1 dB (2,6 dB/s);
+     - sin voz (por debajo de 4 veces el suelo de ruido) la ganancia no se
+       mueve y lo que pasa se atenúa a la mitad: el ruido no se convierte en
+       soplido. */
+static float g_mic = 4.0f;
+static float mic_ruido = 100.0f, mic_nivel = 0.0f;
 static volatile uint32_t pico_mic = 0, rms_mic = 0;
+
+/* GANANCIA FIJA (20-nov). Con el Abbree, el nivelador —el viejo y el nuevo—
+   deja la voz rota aunque el nivel sea correcto (medido: -29 dBFS de mediana,
+   nada recortado): lo que estropea son los CAMBIOS de ganancia de trama a
+   trama, que Codec2 1200 convierte en un sonido áspero, «saturado». En la app
+   pasaba igual y se arreglaba poniendo la ganancia a mano. Así que se puede
+   fijar: `nodo.py audio micro 3` (×3), `audio micro auto` para volver.
+   En décimas; 0 = automático. Se guarda en NVS. */
+static uint8_t mic_fija = 0;
+
+/* LA GANANCIA DEL PROPIO MICRO (+VGM, 0-15), la de su preamplificador, ANTES
+   del Bluetooth (20-nov). Se le pedía siempre 15, el máximo, y el Abbree a
+   tope recorta él solo en cuanto uno se acerca: picos clavados en ~17.000 con
+   el nivelador ya en ×1. Eso no lo arregla nada de aquí, porque llega roto.
+   `nodo.py audio micro hw 8`. Se guarda en NVS; 15 por defecto (el JBL llega
+   flojo y lo necesita). */
+static uint8_t mic_hw = 15;
+
+uint8_t hfp_mic_hw() { return mic_hw; }
+void hfp_mic_hw(uint8_t v)
+{
+    mic_hw = v > 15 ? 15 : v;
+    prefs.putUChar("vgm", mic_hw);
+    if (slc) esp_bt_hf_volume_control(par, ESP_HF_VOLUME_CONTROL_TARGET_MIC, mic_hw);
+}
+
+uint8_t hfp_mic_fija() { return mic_fija; }
+void hfp_mic_fija(uint8_t decimas) { mic_fija = decimas; prefs.putUChar("micg", decimas); }
+
+/* FILTRO DE GRAVES (20-nov). Medido en el aire: con el Abbree, del 20 al 28 %
+   de la energía de la voz cae por debajo de 300 Hz (pegado al micro los
+   graves suben: efecto de proximidad); con el móvil, el 14 %. Codec2 1200
+   convierte ese exceso en un zumbido áspero que se oye como «saturado», y ni
+   el nivelador ni la ganancia fija lo arreglaban. Paso alto Butterworth de
+   2º orden a 300 Hz: lo de debajo no lleva inteligibilidad en una radio. */
+static float hp_b0, hp_b1, hp_b2, hp_a1, hp_a2;
+static float hp_x1, hp_x2, hp_y1, hp_y2;
+static bool hp_listo = false;
+
+static void paso_alto(short *pcm, int n)
+{
+    if (!hp_listo) {
+        const float w = 2.0f * (float)M_PI * 300.0f / 8000.0f;
+        const float c = cosf(w), al = sinf(w) / (2.0f * 0.7071f), a0 = 1.0f + al;
+        hp_b0 = (1.0f + c) / 2.0f / a0; hp_b1 = -(1.0f + c) / a0; hp_b2 = hp_b0;
+        hp_a1 = -2.0f * c / a0;          hp_a2 = (1.0f - al) / a0;
+        hp_listo = true;
+    }
+    for (int i = 0; i < n; i++) {
+        float x = pcm[i];
+        float y = hp_b0 * x + hp_b1 * hp_x1 + hp_b2 * hp_x2 - hp_a1 * hp_y1 - hp_a2 * hp_y2;
+        hp_x2 = hp_x1; hp_x1 = x; hp_y2 = hp_y1; hp_y1 = y;
+        pcm[i] = y > 32767.0f ? 32767 : (y < -32768.0f ? -32768 : (short)y);
+    }
+}
 
 void hfp_agc(short *pcm, int n)
 {
+    paso_alto(pcm, n);
     double e = 0;
     for (int i = 0; i < n; i++) e += (double)pcm[i] * pcm[i];
     float rms = sqrtf(e / n);
     for (int i = 0; i < n; i++) { uint32_t a = abs(pcm[i]); if (a > pico_mic) pico_mic = a; }
-    /* PUERTA DE RUIDO: por debajo de esto no es voz, y subirlo sólo fabrica
-       soplido. Se atenúa en vez de amplificar. */
-    if (rms < 60) {
-        for (int i = 0; i < n; i++) pcm[i] = pcm[i] / 4;
-        rms_mic = rms / 4;
+    if (mic_fija) {
+        float gf = mic_fija / 10.0f;
+        double e3 = 0;
+        for (int i = 0; i < n; i++) { pcm[i] = limita(pcm[i] * gf); e3 += (double)pcm[i] * pcm[i]; }
+        rms_mic = sqrtf(e3 / n);
         return;
     }
-    float objetivo = 3000.0f / rms;
-    if (objetivo > 12.0f) objetivo = 12.0f;
-    if (objetivo < 0.5f) objetivo = 0.5f;
-    if (objetivo < g_mic) g_mic = objetivo;                    // bajar ya
-    else g_mic += (objetivo - g_mic) * 0.05f;                  // subir poco a poco
+    mic_ruido = rms < mic_ruido ? rms : mic_ruido * 1.008f;
+    if (mic_ruido < 10.0f) mic_ruido = 10.0f;
+    bool voz = rms > 40.0f && rms > mic_ruido * 4.0f;
+    float g = g_mic;
+    if (voz) {
+        mic_nivel = (mic_nivel <= 0 || rms > mic_nivel) ? rms
+                    : mic_nivel + (rms - mic_nivel) * 0.08f;
+        float d = 3000.0f / mic_nivel;
+        if (d > 12.0f) d = 12.0f;
+        if (d < 0.25f) d = 0.25f;
+        /* Rápido en los dos sentidos (20-nov, 2ª vuelta, en el aire con el
+           Abbree): con 0,5 dB/trama de bajada y 2,6 dB/s de subida, pegado
+           rompía y al separarse unos cm quedaba bajo varios segundos.
+           Simulado: al separarse, -30 dB en los 3 primeros s (antes -41) y
+           pegado, recorte del 0,1 % (antes 0,8). */
+        if (d < g_mic) { g_mic *= 0.70f; if (g_mic < d) g_mic = d; }
+        else           { g_mic *= 1.05f; if (g_mic > d) g_mic = d; }
+        g = g_mic;
+    } else {
+        g = g_mic * 0.5f;
+    }
     double e2 = 0;
-    for (int i = 0; i < n; i++) { pcm[i] = limita(pcm[i] * g_mic); e2 += (double)pcm[i] * pcm[i]; }
+    for (int i = 0; i < n; i++) { pcm[i] = limita(pcm[i] * g); e2 += (double)pcm[i] * pcm[i]; }
     rms_mic = sqrtf(e2 / n);
 }
 
@@ -395,7 +478,7 @@ static void manos_libres(esp_hf_cb_event_t ev, esp_hf_cb_param_t *p)
             memcpy(par, p->conn_stat.remote_bda, 6);
             hay_par = true;
             esp_bt_hf_volume_control(par, ESP_HF_VOLUME_CONTROL_TARGET_SPK, VOLUMEN);
-            esp_bt_hf_volume_control(par, ESP_HF_VOLUME_CONTROL_TARGET_MIC, 15);
+            esp_bt_hf_volume_control(par, ESP_HF_VOLUME_CONTROL_TARGET_MIC, mic_hw);
             /* El audio se abre en cuanto hay conexión: un transceptor tiene que
                estar escuchando siempre, no sólo durante una «llamada». */
             esp_bt_hf_connect_audio(par);
@@ -573,6 +656,8 @@ bool hfp_arranca()
     hay_par = prefs.getBytes("par", par, 6) == 6;
     prefs.getString("nom", nombre_par, sizeof nombre_par);
     ptt_propio = prefs.getBool("pttp", false);
+    mic_fija = prefs.getUChar("micg", 0);
+    mic_hw = prefs.getUChar("vgm", 15);
 
     heap_antes = ESP.getFreeHeap();
     esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
@@ -831,13 +916,13 @@ void hfp_estado(char *s, size_t cap)
     if (hay_par) mac_txt(par, m);
     snprintf(s, cap,
              "micro: %s %s slc=%s audio=%s a2dp=%s avrcp=%s ptt=%s pila=%uB rx=%luB vacios=%lu/%lu tirados=%lu "
-             "tx=%luB huecos=%lu agc=x%.1f rms=%lu pico=%lu",
+             "tx=%luB huecos=%lu %s=x%.1f vgm=%u rms=%lu pico=%lu",
              m, nombre_par[0] ? nombre_par : "-", slc ? "si" : "no", audio_abierto ? "si" : "no",
              a2dp_ok ? "si" : "no", avrc_ok ? "si" : "no",
              ptt_propio ? (bldn_abajo ? "propio(abajo)" : "propio") : "volumen",
              (unsigned)heap_pila, (unsigned long)bytes_mic, (unsigned long)mic_vacios,
              (unsigned long)mic_bloques, (unsigned long)mic_tirados, (unsigned long)bytes_alt,
-             (unsigned long)huecos_alt, g_mic, (unsigned long)rms_mic, (unsigned long)pico_mic);
+             (unsigned long)huecos_alt, mic_fija ? "fija" : "agc", mic_fija ? mic_fija / 10.0f : g_mic, (unsigned)mic_hw, (unsigned long)rms_mic, (unsigned long)pico_mic);
     pico_mic = 0;
 }
 

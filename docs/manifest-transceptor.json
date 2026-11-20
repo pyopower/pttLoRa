@@ -1,6 +1,6 @@
 {
   "name": "PTT LoRa transceptor (lora32 + micro Bluetooth)",
-  "version": "1.53",
+  "version": "1.54",
   "new_install_prompt_erase": false,
   "builds": [
     {

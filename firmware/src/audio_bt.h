@@ -32,7 +32,11 @@ void hfp_atiende();                             // desde loop(): reconexión, NV
 int  hfp_lee(short *pcm, int n, uint32_t espera_ms);   // muestras leídas (0 si no hay)
 void hfp_vacia_micro();                                // tirar lo viejo al abrir el PTT
 void hfp_escribe(const short *pcm, int n);             // ya con su ganancia
-void hfp_agc(short *pcm, int n);                       // control de ganancia del micro
+void hfp_agc(short *pcm, int n);
+uint8_t hfp_mic_fija();                                // ganancia fija del micro en décimas (0 = auto)
+void hfp_mic_fija(uint8_t decimas);
+uint8_t hfp_mic_hw();                                  // ganancia del propio micro (+VGM 0-15)
+void hfp_mic_hw(uint8_t v);                       // control de ganancia del micro
 bool hfp_listo();                                      // hay audio en los dos sentidos
 
 uint8_t     hfp_fase();

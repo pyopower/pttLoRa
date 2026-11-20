@@ -205,9 +205,17 @@ Trampas de `bench/hfp-ag` (Arduino como componente de ESP-IDF 4.4.7):
    **Ahora, por orden:**
    a. **Detectar el USB de verdad** (ver «Pantalla según la alimentación»): medir
       GPIO3 con y sin USB.
-   b. **Codec2 fuera del núcleo de Bluedroid**: el codificador ya no cabe en 40 ms.
-      Probar la tarea de audio en el núcleo 1 ahora que Bluedroid carga más el 0,
-      o bajar la prioridad/mover lo que no sea SCO.
+   b. ~~**Codec2 fuera del núcleo de Bluedroid**~~: **hecho en la 1.54 (20-nov)**.
+      Con el Abbree, codificar tardaba 42 ms de media (59 máx.) por trama de 40:
+      se tiraba audio sin parar y en el aire sonaba a «modulación pulsante y
+      distorsionada». Ahora la tarea de audio va al núcleo 1 con prioridad 2
+      (por encima de `loop()`): 23,7 ms de media, 26 máx., cero huecos.
+      En la misma versión: nivelador del micro rehecho (sílabas fuertes a RMS
+      3.000, baja hasta 1,5 dB/trama y sube ~5 dB/s; sin voz no se mueve),
+      paso alto a 300 Hz (el Abbree pegado tiene 20-28 % de la energía por
+      debajo de 300 Hz), y por USB: `nodo.py audio micro auto|<ganancia fija>`
+      y `nodo.py audio micro hw <0-15>` (ganancia del propio micro, +VGM; antes
+      se le pedía siempre 15).
    c. **Quitar P1 (`AT+BLDN`) como PTT**: con A2DP+AVRCP el PTT es AVRCP y P1 no
       debe transmitir (decisión del usuario: «inadmisible P1 como PTT»).
    d. Decidir qué diagnósticos se quedan (`diag:` cada 5 s, `oled: despertar`,

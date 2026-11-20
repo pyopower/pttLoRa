@@ -74,6 +74,23 @@ static const uint32_t PILA = 22 * 1024;
 #define AUDIO_PRIORIDAD 1
 #endif
 
+/* ⚠️ EN EL TRANSCEPTOR, EL CÓDEC VA AL NÚCLEO 1 Y POR ENCIMA DE loop() (20-nov).
+   En el núcleo 0 vive Bluedroid, y con el micro Bluetooth (SCO + A2DP + AVRCP)
+   codificar una trama de 40 ms tardaba 42 ms de media y 59 de máximo: el
+   códec iba por detrás del micro, el anillo se llenaba y se tiraba audio sin
+   parar. En el aire sonaba a «modulación pulsante y distorsionada».
+   En el núcleo 1 con la MISMA prioridad que loop() —que nunca suelta la CPU—
+   se turnaban y llegaba tarde (medido el 15-sep); con prioridad 2 el códec
+   corre en cuanto tiene una trama, y mientras espera al micro (hfp_lee
+   bloquea) la CPU es de loop(): 22,5 ms de cada 40 para el códec, el resto
+   para la radio. */
+#ifdef AUDIO_BT
+#undef AUDIO_NUCLEO
+#define AUDIO_NUCLEO 1
+#undef AUDIO_PRIORIDAD
+#define AUDIO_PRIORIDAD 2
+#endif
+
 // -------------------------------------------------------------- colas ----
 struct AudioRx {
     uint8_t tipo;                   // AUD_*
@@ -737,6 +754,15 @@ void audio_orden(const uint8_t *d, uint16_t n)
         else dice("uso: audio bt conecta AA:BB:CC:DD:EE:FF");
         break;
     case 7: hfp_olvida(); break;
+    case 12:
+        if (n > 1) hfp_mic_fija(d[1]);
+        if (hfp_mic_fija()) dice("micro: ganancia fija x%.1f", hfp_mic_fija() / 10.0f);
+        else dice("micro: ganancia automatica");
+        break;
+    case 13:
+        if (n > 1) hfp_mic_hw(d[1]);
+        dice("micro: ganancia del propio micro %u/15", hfp_mic_hw());
+        break;
 #else
     case 5: case 6: case 7:
         dice("este firmware no lleva micro Bluetooth (entorno transceptor)");
