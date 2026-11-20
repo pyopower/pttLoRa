@@ -196,6 +196,12 @@ class MainActivity : Activity(), NodoService.Observador {
         arrancaMetro()          // si la aguja se quedó a medias, que termine
         NodoService.instancia?.let {
             it.observador = this
+            /* ⚠️ LA LISTA SE REPINTA AL VOLVER (20-nov). Lo que se oye con la
+               pantalla apagada o la app detrás SÍ se apunta en el servicio,
+               pero el aviso de repintar se perdía (no había observador) y al
+               volver nadie la pintaba: la lista salía vacía hasta que tu
+               propio PTT provocaba un repintado y aparecía todo de golpe. */
+            pintaRueda()
             /* Vale cualquiera de los dos caminos: con solo el de datos
                tambien se puede hablar, y la pantalla no debe decir "sin
                enlace" cuando en realidad se esta saliendo por Internet. */
@@ -253,7 +259,9 @@ class MainActivity : Activity(), NodoService.Observador {
            pantalla se queda sin enterarse de nada — y lo primero que se pierde
            es la peticion del codigo, que es justo lo que bloquea al usuario. */
         for (t in longArrayOf(0, 200, 500, 1000, 2000))
-            ui.postDelayed({ NodoService.instancia?.observador = this }, t)
+            ui.postDelayed({
+                NodoService.instancia?.let { if (it.observador !== this) { it.observador = this; pintaRueda() } }
+            }, t)
     }
 
     /* Vigilante de respaldo mientras la pantalla esta a la vista.
@@ -266,7 +274,10 @@ class MainActivity : Activity(), NodoService.Observador {
     private val vigilante = object : Runnable {
         override fun run() {
             NodoService.instancia?.let {
-                if (it.observador !== this@MainActivity) it.observador = this@MainActivity
+                if (it.observador !== this@MainActivity) {
+                    it.observador = this@MainActivity
+                    pintaRueda()
+                }
                 if (it.pideCodigo && !dialogoCodigo) onPideCodigo()
             }
             ui.postDelayed(this, 1000)
