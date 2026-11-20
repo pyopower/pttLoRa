@@ -585,7 +585,12 @@ class NodoService : Service() {
                 }
                 if (enlazado) {
                     espera = 3000L
-                    if (!transmitiendo && ahora - ultimoLatido >= 10000) {
+                    /* TAMBIÉN TRANSMITIENDO (20-nov). Con `!transmitiendo`
+                       el nodo no tenía nada que contestar mientras hablabas,
+                       y a los 45 s saltaba el vigilante de enlace mudo de más
+                       abajo: rehacía la conexión y cortaba la pasada, mucho
+                       antes del TOT. */
+                    if (ahora - ultimoLatido >= 10000) {
                         ultimoLatido = ahora
                         nodo?.latido()
                     }
