@@ -34,8 +34,17 @@ class AudioEngine(private val ctx: android.content.Context,
            la placa en modo autónomo. 3000 (-21 dBFS) deja ese margen; el
            volumen lo pone el que escucha, no el que transmite. */
         private const val OBJETIVO = 3000.0
-        /** Techo del limitador (-2 dBFS). */
+        /** Límites de la ganancia del nivelador: de -12 dB a +9,5 dB. Antes
+         *  llegaba a x4 y subía también los finales de palabra y el ruido. */
+        private const val AGC_MIN = 0.25f
+        private const val AGC_MAX = 3.0f
+        /** Techo del limitador de recepción (-2 dBFS). */
         private const val TECHO = 26000f
+        /** Techo del limitador del MICRÓFONO (-4 dBFS). Más bajo que el de
+         *  recepción: lo que entra en Codec2 1200 cerca del máximo sale roto
+         *  (medido el 20-nov: la voz decodificada ya toca el techo con la
+         *  entrada a -22 dBFS de mediana). */
+        private const val TECHO_TX = 20000f
         /** Pasos de ganancia que ofrece Ajustes. */
         val GANANCIAS = floatArrayOf(1.0f, 2.0f, 3.0f, 4.0f, 5.0f)
         /** Ganancias del MICRÓFONO. Empiezan por debajo de 1 a propósito: el
@@ -140,6 +149,9 @@ class AudioEngine(private val ctx: android.content.Context,
     @Volatile var micCrudo = false
     private var agcGain = 1.0f
     private var agcFrames = 0
+    /** Suelo de ruido estimado (RMS) y nivel de las sílabas fuertes. */
+    private var agcRuido = 300.0
+    private var agcNivel = 0.0
 
     private var track: AudioTrack? = null
     private var playThread: Thread? = null
@@ -389,7 +401,7 @@ class AudioEngine(private val ctx: android.content.Context,
      *  que puede) y baja la ganancia de toda la trama lo justo; al soltar
      *  sube poco a poco, en rampa dentro de la trama, para que no bombee. La
      *  onda se escala, no se deforma. Sin trigonometría: corre en los POC. */
-    private class Limitador {
+    private class Limitador(private val techo: Float = TECHO) {
         private var g = 1f
         fun aplica(pcm: ShortArray, n: Int, ganancia: Float) {
             var pico = 1f
@@ -397,7 +409,7 @@ class AudioEngine(private val ctx: android.content.Context,
                 val a = Math.abs(pcm[i].toFloat())
                 if (a > pico) pico = a
             }
-            val obj = minOf(1f, TECHO / (pico * ganancia))
+            val obj = minOf(1f, techo / (pico * ganancia))
             val ini: Float
             val fin: Float
             if (obj < g) { ini = obj; fin = obj }          // ataque: ya, sin pasarse
@@ -411,18 +423,35 @@ class AudioEngine(private val ctx: android.content.Context,
             g = fin
         }
     }
-    private val limTx = Limitador()
+    private val limTx = Limitador(TECHO_TX)
     private val limRx = Limitador()
 
     /**
-     * Nivelador del microfono antes de transmitir.
+     * Nivelador del microfono antes de transmitir (rehecho el 20-nov).
      *
      * Una radio DMR comprime su audio y sale siempre igual de fuerte; un movil
      * no, y depende ademas de a que distancia hables. Sin esto, en el mismo TG
-     * unos se oyen bien y otros hay que adivinarlos. Se busca un nivel objetivo
-     * de voz y se corrige despacio al subir y deprisa al bajar, que es lo que
-     * evita el bombeo en las pausas. El ruido de fondo (RMS bajo) no se toca:
-     * amplificarlo solo sirve para llenar el canal de siseo.
+     * unos se oyen bien y otros hay que adivinarlos.
+     *
+     * ⚠️ EL DE ANTES SATURABA, y los usuarios lo tenian que apagar. Medía el
+     * RMS de cada trama de 40 ms y corregía casi al momento, así que actuaba
+     * como un compresor salvaje: subía cada consonante, cada final de palabra y
+     * cada respiración, y lo que no era voz (calle, coche) también, porque solo
+     * miraba que pasara de 250. Con un micro caliente la voz entraba en Codec2 a
+     * -16 dBFS, y el códec rompe por encima de unos -22 (medido con la propia
+     * voz de la red: todas las grabaciones estaban pegadas a ese techo).
+     *
+     * Ahora es un nivelador LENTO, como el de una emisora:
+     *  · solo aprende de la VOZ: tramas 12 dB por encima del suelo de ruido,
+     *    que se estima aparte (baja enseguida, sube despacio). En las pausas y
+     *    con ruido la ganancia se queda quieta;
+     *  · se guía por las sílabas FUERTES (sube al momento con un pico, decae
+     *    despacio), no por la media: así la voz con picos no se pasa;
+     *  · corrige poco a poco: baja hasta 0,5 dB por trama y sube ~2,6 dB/s;
+     *  · entre -12 y +9,5 dB, y el limitador del micro va a -4 dBFS.
+     * Simulado con voz de la red a niveles de micro de -40 a -8 dBFS: sale
+     * entre -25 y -31 dBFS (la 1.0.3, de -16 a -33) y el ruido de fondo queda
+     * de 6 a 15 dB más bajo.
      */
     /** Devuelve la ganancia que toca; ya no la aplica (ver `limTx`). */
     private fun nivelar(pcm: ShortArray, n: Int): Float {
@@ -433,16 +462,16 @@ class AudioEngine(private val ctx: android.content.Context,
             suma += v * v
         }
         val rms = Math.sqrt(suma / n)
-        if (rms > 250) {
-            val deseada = (OBJETIVO / rms).toFloat().coerceIn(0.4f, 4f)
-            // Subir despacio evita que respire con el ruido de fondo, pero al
-            // principio de cada pulsacion deja las primeras palabras bajas: las
-            // primeras tramas van deprisa y luego se calma.
-            val arranque = agcFrames < 8
-            agcFrames++
-            val paso = if (deseada < agcGain) 0.35f else if (arranque) 0.30f else 0.06f
-            agcGain += (deseada - agcGain) * paso
-        }
+        agcRuido = if (rms < agcRuido) rms else agcRuido * 1.008
+        if (agcRuido < 30.0) agcRuido = 30.0
+        val esVoz = rms > 200 && rms > agcRuido * 4
+        if (!esVoz) return agcGain
+        agcFrames++
+        agcNivel = if (agcNivel <= 0.0 || rms > agcNivel) rms
+                   else agcNivel + (rms - agcNivel) * 0.02
+        val deseada = (OBJETIVO / agcNivel).toFloat().coerceIn(AGC_MIN, AGC_MAX)
+        agcGain = if (deseada < agcGain) maxOf(deseada, agcGain * 0.94f)
+                  else minOf(deseada, agcGain * 1.012f)
         return agcGain
     }
 

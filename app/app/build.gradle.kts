@@ -31,8 +31,8 @@ android {
         applicationId = "c31ag.pttlora"
         minSdk = 19
         targetSdk = 36   // Google Play (1.0)
-        versionCode = 80
-        versionName = "1.0.7"
+        versionCode = 81
+        versionName = "1.0.8"
         /* Con `-PsoloV7a` sale una APK **solo de 32 bits**: la mitad de tamaño
            y sin la biblioteca de 64, que en un móvil viejo no pinta nada. Es
            el mismo truco del /apk7 de la app PTT. Sin la propiedad, las dos
