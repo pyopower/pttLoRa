@@ -52,6 +52,10 @@ class MainActivity : Activity(), NodoService.Observador {
     }
 
     private lateinit var prefs: Prefs
+    /** PANTALLA COMPACTA (radios PoC). Como en ADN PoC: automática si el lado
+     *  corto mide menos de 340 dp, o forzada desde Ajustes → Pantalla. Infla
+     *  `principal_poc` (mismos ids) y acorta los textos del PTT y la rueda. */
+    private var compacta = false
     private lateinit var tEstado: TextView
     private lateinit var tQuien: TextView
     private lateinit var tLog: TextView
@@ -86,9 +90,10 @@ class MainActivity : Activity(), NodoService.Observador {
             fondoPtt.frac = quedan.toFloat() / NodoService.TOT_S
             // Los últimos diez segundos se cuentan hacia atrás: ahí lo que hace
             // falta saber no es cuánto llevas, es que te van a cortar.
-            bPtt.text = if (NodoService.instancia?.sinAcuse == true) "⚠️ NO TE LLEGA   ${seg}s"
-                        else if (quedan in 0..10) "CORTE EN ${quedan}s"
-                        else "TRANSMITIENDO   ${seg}s"
+            bPtt.text = if (NodoService.instancia?.sinAcuse == true)
+                            (if (compacta) "⚠️ NO LLEGA ${seg}s" else "⚠️ NO TE LLEGA   ${seg}s")
+                        else if (quedan in 0..10) (if (compacta) "CORTE ${quedan}s" else "CORTE EN ${quedan}s")
+                        else if (compacta) "TX ${seg}s" else "TRANSMITIENDO   ${seg}s"
             ui.postDelayed(this, 200)
         }
     }
@@ -126,6 +131,9 @@ class MainActivity : Activity(), NodoService.Observador {
                              else resources.getColor(R.color.texto))
     }
 
+    private fun txtLibre() = if (compacta) "HABLAR" else "PULSAR PARA HABLAR"
+    private fun txtOcupado() = if (compacta) "OCUPADO" else "CANAL OCUPADO"
+
     private fun arrancaMetro() {
         if (metroCorre) return
         metroCorre = true
@@ -135,7 +143,12 @@ class MainActivity : Activity(), NodoService.Observador {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         prefs = Prefs(this)
-        setContentView(R.layout.principal)
+        compacta = when (prefs.pantalla) {
+            1 -> false
+            2 -> true
+            else -> resources.configuration.smallestScreenWidthDp < 340
+        }
+        setContentView(if (compacta) R.layout.principal_poc else R.layout.principal)
         /* Android 15+ con target 35+: la app se pinta DEBAJO de las barras del
            sistema y no hay forma de evitarlo. Se le da a la raíz el margen de
            las barras, sumado al relleno que ya tuviera. */
@@ -411,6 +424,21 @@ class MainActivity : Activity(), NodoService.Observador {
                         // Se rehace la pantalla: el tema se elige antes de
                         // inflar, así que no basta con repintar.
                         recreate()
+                    }
+                }.show()
+        }
+        val bPantalla = v.findViewById<Button>(R.id.pantalla)
+        val nombresPantalla = arrayOf("Automática", "Normal", "Compacta (PoC)")
+        fun textoPantalla() = "Pantalla: " + nombresPantalla[prefs.pantalla] +
+            if (prefs.pantalla == 0) (if (compacta) " (compacta)" else " (normal)") else ""
+        bPantalla.text = textoPantalla()
+        bPantalla.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Pantalla")
+                .setItems(nombresPantalla) { _, i ->
+                    if (i != prefs.pantalla) {
+                        prefs.pantalla = i
+                        recreate()      // otro layout: hay que volver a inflar
                     }
                 }.show()
         }
@@ -1622,7 +1650,7 @@ class MainActivity : Activity(), NodoService.Observador {
         // existe en un canal simplex, así que tiene que verse de un vistazo.
         if (NodoService.instancia?.transmitiendo == true) return@post   // manda el TX
         fondoPtt.modo = if (ocupado) PttFondo.Modo.OCUPADO else PttFondo.Modo.LIBRE
-        bPtt.text = if (ocupado) "CANAL OCUPADO" else "PULSAR PARA HABLAR"
+        bPtt.text = if (ocupado) txtOcupado() else txtLibre()
     } }
 
     override fun onQuienHabla(indicativo: String?, rssi: Int) { ui.post {
@@ -1654,7 +1682,7 @@ class MainActivity : Activity(), NodoService.Observador {
             tQuien.text = if (quien.isNullOrBlank()) "" else "◀ $quien"
         } else if (estado == Nodo.PTT_LIBRE) {
             fondoPtt.modo = PttFondo.Modo.LIBRE
-            bPtt.text = "PULSAR PARA HABLAR"
+            bPtt.text = txtLibre()
         }
     } }
 
@@ -1678,18 +1706,18 @@ class MainActivity : Activity(), NodoService.Observador {
             arrancaMetro()
             fondoPtt.modo = PttFondo.Modo.TX
             fondoPtt.frac = 1f
-            bPtt.text = "TRANSMITIENDO   0s"
+            bPtt.text = if (compacta) "TX 0s" else "TRANSMITIENDO   0s"
             ui.post(relojTx)
         } else {
             fondoPtt.sMetro.reposo()    // vuelve a ser S-metro, aguja a cero
             arrancaMetro()
             fondoPtt.modo = PttFondo.Modo.LIBRE
             fondoPtt.frac = 1f          // el depósito vuelve a estar lleno
-            bPtt.text = "PULSAR PARA HABLAR"
+            bPtt.text = txtLibre()
             // Al soltar puede que ya esté hablando otro: que se vea.
             if (NodoService.instancia?.canalOcupado == true) {
                 fondoPtt.modo = PttFondo.Modo.OCUPADO
-                bPtt.text = "CANAL OCUPADO"
+                bPtt.text = txtOcupado()
             }
         }
     } }
@@ -1708,6 +1736,7 @@ class MainActivity : Activity(), NodoService.Observador {
      *  adaptador: son veinte filas como mucho y así no entra ni una dependencia
      *  más en una app que cabe en 400 KB. */
     private val reloj = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+    private val relojCorto = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
 
     private fun pintaRueda() {
         val svc = NodoService.instancia
@@ -1716,7 +1745,7 @@ class MainActivity : Activity(), NodoService.Observador {
         if (lista.isEmpty()) {
             val t = TextView(this)
             t.text = "todavía no ha hablado nadie"
-            t.textSize = 13f
+            t.textSize = if (compacta) 11f else 13f
             t.setTextColor(resources.getColor(R.color.texto_flojo))
             rueda.addView(t)
             return
@@ -1731,7 +1760,7 @@ class MainActivity : Activity(), NodoService.Observador {
                se leía fatal. Once caracteres es lo que cabe con la hora, la
                duración y el dBm al lado. */
             val quien = (if (nombre != null) "${h.indicativo} ${nombre}"
-                         else h.indicativo).take(11)
+                         else h.indicativo).take(if (compacta) 9 else 11)
             /* La duración se escribe al CERRAR la transmisión, así que mientras
                alguien habla todavía no la hay: se dice que está en curso en vez
                de enseñar un 0,0 s que sería mentira. */
@@ -1745,14 +1774,16 @@ class MainActivity : Activity(), NodoService.Observador {
                 h.yo -> if (h.porRf) "▶📻" else "▶🌐"
                 h.rssi == 126 -> "👥"
                 // Con la unidad: un "-105" suelto no dice de qué habla.
-                h.porRf && h.rssi < 126 -> "📻${h.rssi} dBm"
+                h.porRf && h.rssi < 126 -> if (compacta) "📻${h.rssi}" else "📻${h.rssi} dBm"
                 h.porRf -> "📻"
                 else -> "🌐"
             }
             val t = TextView(this)
-            t.text = "%s  %-11s %6s  %s".format(
+            t.text = if (compacta)
+                "%s %-9s %5s %s".format(relojCorto.format(java.util.Date(h.cuando)), quien, dura, via)
+            else "%s  %-11s %6s  %s".format(
                 reloj.format(java.util.Date(h.cuando)), quien, dura, via)
-            t.textSize = 13f
+            t.textSize = if (compacta) 11f else 13f
             t.maxLines = 1
             t.typeface = android.graphics.Typeface.MONOSPACE
             t.setTextColor(when {

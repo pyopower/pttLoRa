@@ -110,6 +110,12 @@ class Prefs(ctx: Context) {
         get() = p.getInt("aprs_ssid", -1)
         set(v) { p.edit().putInt("aprs_ssid", v.coerceIn(-1, 15)).apply() }
 
+    /** Pantalla: 0 = automática (la compacta si es pequeña, como en los PoC),
+     *  1 = siempre la normal, 2 = siempre la compacta. */
+    var pantalla: Int
+        get() = p.getInt("pantalla", 0)
+        set(v) { p.edit().putInt("pantalla", v).apply() }
+
     /** Aspecto: 0 = como el sistema, 1 = claro, 2 = oscuro. Por defecto sigue
      *  al sistema, que es lo que espera casi todo el mundo. */
     var tema: Int
