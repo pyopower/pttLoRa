@@ -267,15 +267,52 @@ class MainActivity : Activity(), NodoService.Observador {
     /** Tecla física de PTT: en los POC suele ser una tecla suelta del lateral.
      *  Se atiende aquí y en el servicio para que valga también en segundo plano. */
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
-        if (e.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
-            e.keyCode == KeyEvent.KEYCODE_HEADSETHOOK) {
+        if (esTeclaPtt(e.keyCode)) {
             if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0)
-                NodoService.instancia?.pulsacion(true)
+                NodoService.instancia?.pulsacionFisica(true)
             else if (e.action == KeyEvent.ACTION_UP)
-                NodoService.instancia?.pulsacion(false)
+                NodoService.instancia?.pulsacionFisica(false)
             return true
         }
         return super.dispatchKeyEvent(e)
+    }
+
+    /** La del manos libres siempre; además la aprendida en Ajustes, o VOLUMEN−
+     *  si no se ha aprendido ninguna (lo de siempre). Aprender otra devuelve
+     *  VOLUMEN− a su sitio: en un PoC hace falta para subir y bajar. */
+    private fun esTeclaPtt(k: Int) = k == KeyEvent.KEYCODE_HEADSETHOOK ||
+        k == (if (prefs.teclaPtt > 0) prefs.teclaPtt else KeyEvent.KEYCODE_VOLUME_DOWN)
+
+    private fun nombreTecla(k: Int) = if (k > 0)
+        KeyEvent.keyCodeToString(k).removePrefix("KEYCODE_") + " ($k)" else "VOLUMEN−"
+
+    /** Aprende la tecla PTT: la siguiente que se pulse (salvo atrás y
+     *  encendido). Va en el propio diálogo porque, con él abierto, las teclas
+     *  le llegan a él y no a la actividad. */
+    private fun aprendeTeclaPtt(luego: () -> Unit) {
+        val d = AlertDialog.Builder(this)
+            .setTitle("Tecla PTT")
+            .setMessage("Pulsa ahora la tecla PTT del equipo.\n\nAhora: " + nombreTecla(prefs.teclaPtt) +
+                "\n\nCon la pantalla apagada también vale el aviso de PTT que mandan " +
+                "muchos PoC (Inrico, Runbo, Sonim…), sin hacer nada.")
+            .setNeutralButton("Volver a VOLUMEN−") { _, _ -> prefs.teclaPtt = -1; luego() }
+            .setNegativeButton("Cancelar", null)
+            .create()
+        d.setOnKeyListener { dd, k, ev ->
+            if (k == KeyEvent.KEYCODE_BACK || k == KeyEvent.KEYCODE_POWER) return@setOnKeyListener false
+            if (ev.action == KeyEvent.ACTION_UP && k <= 0) {
+                // KEYCODE_UNKNOWN: la tecla no llega como tecla; queda el aviso del sistema
+                Toast.makeText(this, "Esa tecla no tiene código; se usará el aviso de PTT del sistema", Toast.LENGTH_LONG).show()
+                dd.dismiss(); return@setOnKeyListener true
+            }
+            if (ev.action == KeyEvent.ACTION_UP) {
+                prefs.teclaPtt = k
+                Toast.makeText(this, "Tecla PTT: " + nombreTecla(k), Toast.LENGTH_LONG).show()
+                dd.dismiss(); luego()
+            }
+            true
+        }
+        d.show()
     }
 
     private fun arranca() {
@@ -441,6 +478,10 @@ class MainActivity : Activity(), NodoService.Observador {
                     }
                 }.show()
         }
+        val bTecla = v.findViewById<Button>(R.id.tecla_ptt)
+        fun textoTecla() = "Tecla PTT: " + nombreTecla(prefs.teclaPtt)
+        bTecla.text = textoTecla()
+        bTecla.setOnClickListener { aprendeTeclaPtt { bTecla.text = textoTecla() } }
         val bPantalla = v.findViewById<Button>(R.id.pantalla)
         val nombresPantalla = arrayOf("Automática", "Normal", "Compacta (PoC)")
         fun textoPantalla() = "Pantalla: " + nombresPantalla[prefs.pantalla] +

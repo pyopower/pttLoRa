@@ -28,6 +28,13 @@ import android.view.KeyEvent
 class NodoService : Service() {
 
     companion object {
+        /** Avisos de PTT de los PoC (ver `avisosPtt`). */
+        val PTT_PULSA = listOf("android.intent.action.PTT.down", "com.android.intent.PTT.down",
+            "android.intent.action.PTT_DOWN", "com.inrico.ptt.down", "com.runbo.ptt.down",
+            "com.runbo.ptt.key.down", "com.zello.ptt.down", "com.sonim.intent.action.PTT_KEY_DOWN")
+        val PTT_SUELTA = listOf("android.intent.action.PTT.up", "com.android.intent.PTT.up",
+            "android.intent.action.PTT_UP", "com.inrico.ptt.up", "com.runbo.ptt.up",
+            "com.runbo.ptt.key.up", "com.zello.ptt.up", "com.sonim.intent.action.PTT_KEY_UP")
         private const val TAG = "pttlora.servicio"
         const val CANAL_NOTIF = "pttlora"
         const val ACCION_PTT = "c31ag.pttlora.PTT"
@@ -535,6 +542,7 @@ class NodoService : Service() {
         prefs = Prefs(this)
         arrancaNotificacion()
         botoneraBt(true)
+        avisosPtt(true)
         if (prefs.posActiva) posicion(true)
         /* UN SOLO HILO para las dos cosas que mantienen el enlace en pie:
            el latido y la reconexion. Las dos son "cada pocos segundos, mira
@@ -866,6 +874,7 @@ class NodoService : Service() {
         cerrado = true
         hiloEnlace?.interrupt()
         botoneraBt(false)
+        avisosPtt(false)
         paraGps()
         sueltaPtt()
         nodoDatos?.desconecta()
@@ -1508,6 +1517,49 @@ class NodoService : Service() {
      *  comporte distinto, que es lo que pasó en la app PTT. */
     fun pulsacion(abajo: Boolean) {
         if (abajo) tomaPtt() else sueltaPtt()
+    }
+
+    /* EL PTT DE LOS PoC (21-nov). Muchas radios PoC no mandan su tecla PTT
+       como tecla, o solo la mandan con la pantalla encendida: con la pantalla
+       apagada el sistema la convierte en un AVISO (broadcast) que cualquier
+       app puede escuchar. Son los que emiten de serie los genéricos y los de
+       Inrico, Runbo, Zello y Sonim (la misma lista que ADN PoC). Se escuchan
+       aquí, en el servicio, para que valgan con la pantalla apagada y la app
+       detrás. */
+    private var avisosPtt: android.content.BroadcastReceiver? = null
+
+    /** Último «soltar» que llegó por tecla o aviso. Hay PoC que mandan LAS DOS
+     *  cosas (tecla y aviso) por cada pulsación: si el «pulsar» rezagado de
+     *  una llegara tras el «soltar» de la otra, volvería a abrir el micro y se
+     *  quedaría transmitiendo hasta el TOT. Un pulsar que llega menos de
+     *  300 ms después de un soltar físico se tira. */
+    @Volatile private var tSueltaFisico = 0L
+
+    /** PTT por tecla física o aviso del sistema (no el botón de la pantalla). */
+    fun pulsacionFisica(abajo: Boolean) {
+        val ahora = android.os.SystemClock.elapsedRealtime()
+        if (abajo) { if (ahora - tSueltaFisico < 300) return; tomaPtt() }
+        else { tSueltaFisico = ahora; sueltaPtt() }
+    }
+
+    private fun avisosPtt(encender: Boolean) {
+        avisosPtt?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
+        avisosPtt = null
+        if (!encender) return
+        val rx = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) {
+                when (i?.action) {
+                    in PTT_PULSA -> pulsacionFisica(true)
+                    in PTT_SUELTA -> pulsacionFisica(false)
+                }
+            }
+        }
+        val f = android.content.IntentFilter().apply { (PTT_PULSA + PTT_SUELTA).forEach { addAction(it) } }
+        try {
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(rx, f, Context.RECEIVER_EXPORTED)
+            else @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(rx, f)
+            avisosPtt = rx
+        } catch (_: Exception) {}
     }
 
     /* PTT DE LOS MICRO-ALTAVOCES BLUETOOTH (Abbree / KST_vHMIC010, 2-oct).

@@ -110,6 +110,12 @@ class Prefs(ctx: Context) {
         get() = p.getInt("aprs_ssid", -1)
         set(v) { p.edit().putInt("aprs_ssid", v.coerceIn(-1, 15)).apply() }
 
+    /** Tecla física del PTT (código de KeyEvent). -1 = la de siempre,
+     *  VOLUMEN−; en un PoC se aprende desde Ajustes → Tecla PTT. */
+    var teclaPtt: Int
+        get() = p.getInt("tecla_ptt", -1)
+        set(v) { p.edit().putInt("tecla_ptt", v).apply() }
+
     /** Pantalla: 0 = automática (la compacta si es pequeña, como en los PoC),
      *  1 = siempre la normal, 2 = siempre la compacta. */
     var pantalla: Int

@@ -77,6 +77,10 @@
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="Aspecto" />
 
+    <Button android:id="@+id/tecla_ptt"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Tecla PTT" />
+
     <Button android:id="@+id/pantalla"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="Pantalla" />
