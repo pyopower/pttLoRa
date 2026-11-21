@@ -25,15 +25,15 @@
         <Button android:id="@+id/plegar"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:minWidth="0dp" android:minHeight="0dp"
-            android:paddingLeft="10dp" android:paddingRight="10dp"
-            android:paddingTop="2dp" android:paddingBottom="2dp"
+            android:paddingLeft="14dp" android:paddingRight="14dp"
+            android:paddingTop="5dp" android:paddingBottom="5dp"
             android:textSize="12sp"
             android:text="▾" />
         <Button android:id="@+id/salir"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:minWidth="0dp" android:minHeight="0dp"
             android:paddingLeft="8dp" android:paddingRight="8dp"
-            android:paddingTop="2dp" android:paddingBottom="2dp"
+            android:paddingTop="5dp" android:paddingBottom="5dp"
             android:textSize="12sp"
             android:text="Salir" />
     </LinearLayout>

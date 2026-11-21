@@ -168,6 +168,7 @@ class MainActivity : Activity(), NodoService.Observador {
         tLog = findViewById(R.id.log)
         bPtt = findViewById(R.id.ptt)
         bPtt.background = fondoPtt
+        bPtt.text = txtLibre()
         rueda = findViewById(R.id.rueda)
         Nombres.arranca(this)
         Nombres.alLlegar = { ui.post { pintaRueda() } }
@@ -565,6 +566,35 @@ class MainActivity : Activity(), NodoService.Observador {
         }
 
 
+        /** Lo que hace «Guardar» (igual en el diálogo y en la pantalla compacta). */
+        fun guardar() {
+            prefs.indicativo = eInd.text.toString()
+            /* 1.0: sin placa elegida, se empieza por Internet (modo
+               online) en vez de no dejar seguir. */
+            if (prefs.indicativo.isNotBlank() && !prefs.hayNodo)
+                prefs.datosActivo = true
+            if (!prefs.listo) {
+                Toast.makeText(this, "Hace falta tu indicativo",
+                               Toast.LENGTH_LONG).show()
+                ajustes()
+            } else {
+                /* Una sola orden de reconectar, y forzada. Antes se
+                   desconectaba, se arrancaba el servicio (que se conecta
+                   solo al crearse) y ADEMAS se pedia conectar a los 800 ms:
+                   dos sockets contra un nodo que admite uno. */
+                arranca()
+                /* Guardar es el usuario diciendo expresamente lo que
+                   quiere, así que aquí SÍ se le pone el indicativo al
+                   nodo (en una conexión normal no se le toca: ver
+                   `Nodo.configura`). */
+                NodoService.instancia?.ponIndicativo = true
+                ui.postDelayed({
+                    NodoService.instancia?.ponIndicativo = true
+                    NodoService.instancia?.conecta(true)
+                }, 800)
+            }
+        }
+        if (compacta) { ajustesCompactos(v, ::guardar); return }
         AlertDialog.Builder(this)
             /* La version, a la vista. Sin esto no hay manera de saber que se
                esta probando — ni el usuario ni quien le da soporte —, y eso
@@ -579,33 +609,7 @@ class MainActivity : Activity(), NodoService.Observador {
                es el indicativo que se esté tecleando — lo demás (nodo, canal,
                códec…) se guarda al elegirlo en su propio menú. */
             .apply { if (prefs.listo) setNegativeButton("Volver", null) }
-            .setPositiveButton("Guardar") { _, _ ->
-                prefs.indicativo = eInd.text.toString()
-                /* 1.0: sin placa elegida, se empieza por Internet (modo
-                   online) en vez de no dejar seguir. */
-                if (prefs.indicativo.isNotBlank() && !prefs.hayNodo)
-                    prefs.datosActivo = true
-                if (!prefs.listo) {
-                    Toast.makeText(this, "Hace falta tu indicativo",
-                                   Toast.LENGTH_LONG).show()
-                    ajustes()
-                } else {
-                    /* Una sola orden de reconectar, y forzada. Antes se
-                       desconectaba, se arrancaba el servicio (que se conecta
-                       solo al crearse) y ADEMAS se pedia conectar a los 800 ms:
-                       dos sockets contra un nodo que admite uno. */
-                    arranca()
-                    /* Guardar es el usuario diciendo expresamente lo que
-                       quiere, así que aquí SÍ se le pone el indicativo al
-                       nodo (en una conexión normal no se le toca: ver
-                       `Nodo.configura`). */
-                    NodoService.instancia?.ponIndicativo = true
-                    ui.postDelayed({
-                        NodoService.instancia?.ponIndicativo = true
-                        NodoService.instancia?.conecta(true)
-                    }, 800)
-                }
-            }
+            .setPositiveButton("Guardar") { _, _ -> guardar() }
             .setCancelable(prefs.listo)
             .show()
     }
@@ -615,6 +619,62 @@ class MainActivity : Activity(), NodoService.Observador {
      *  No hay uno mejor: el Bluetooth no necesita red ninguna pero es de un
      *  usuario, y el WiFi admite hasta ocho, cada uno con su indicativo. Se
      *  explica en el propio menú porque el usuario no tiene por qué saberlo. */
+    /** AJUSTES EN LA PANTALLA COMPACTA. El AlertDialog, con sus márgenes,
+     *  su título y tres botones apilados, dejaba en un PoC una rendija de dos
+     *  filas para la lista: aquí va a pantalla completa, con el título en una
+     *  línea y los tres botones en una fila abajo. Mismo contenido (ajustes.xml). */
+    private fun ajustesCompactos(v: View, guardar: () -> Unit) {
+        val d = android.app.Dialog(this, R.style.TemaPTT)
+        val dp = resources.displayMetrics.density
+        fun px(x: Int) = (x * dp).toInt()
+        (v as? android.view.ViewGroup)?.getChildAt(0)?.let { lista ->
+            lista.setPadding(px(6), px(4), px(6), px(4))
+            // botones de la lista más bajos y con letra de PoC
+            if (lista is android.view.ViewGroup) for (i in 0 until lista.childCount) {
+                val c = lista.getChildAt(i)
+                if (c is Button) { c.textSize = 13f; c.minHeight = 0; c.minimumHeight = 0
+                                   c.setPadding(px(4), px(6), px(4), px(6)) }
+                else if (c is TextView) c.textSize = 12f
+            }
+        }
+        val raiz = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setBackgroundColor(resources.getColor(R.color.fondo))
+        }
+        raiz.addView(TextView(this).apply {
+            text = "Ajustes · v" + BuildConfig.VERSION_NAME
+            textSize = 13f; setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(resources.getColor(R.color.texto))
+            setPadding(px(6), px(4), px(6), px(2))
+        })
+        if (v.parent != null) (v.parent as android.view.ViewGroup).removeView(v)
+        raiz.addView(v, android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        val fila = android.widget.LinearLayout(this)
+        fun boton(t: String, hazlo: () -> Unit) = Button(this).apply {
+            text = t; textSize = 12f; minHeight = 0; minimumHeight = 0
+            setPadding(px(2), px(4), px(2), px(4))
+            setOnClickListener { hazlo() }
+        }.also { fila.addView(it, android.widget.LinearLayout.LayoutParams(0,
+                     android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
+        boton("Registro") { d.dismiss(); registro() }
+        if (prefs.listo) boton("Volver") { d.dismiss() }
+        boton("Guardar") { d.dismiss(); guardar() }
+        raiz.addView(fila)
+        d.setContentView(raiz)
+        // Android 15+: la ventana va por debajo de las barras del sistema
+        if (Build.VERSION.SDK_INT >= 35) raiz.setOnApplyWindowInsetsListener { w, ins ->
+            val m = ins.getInsets(android.view.WindowInsets.Type.systemBars() or
+                                  android.view.WindowInsets.Type.displayCutout())
+            w.setPadding(m.left, m.top, m.right, m.bottom)
+            ins
+        }
+        d.setCancelable(prefs.listo)
+        d.show()
+        d.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+
     private fun eligeTransporte(luego: () -> Unit) {
         AlertDialog.Builder(this)
             .setTitle("¿Cómo se habla con el nodo?")
