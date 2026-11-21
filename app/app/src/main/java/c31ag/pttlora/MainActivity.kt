@@ -115,6 +115,7 @@ class MainActivity : Activity(), NodoService.Observador {
 
     /** Abre o pliega el panel de abajo y lo recuerda. */
     private fun pliega(abierto: Boolean) {
+        if (compacta) return        // en la compacta no hay panel: va todo en «Menú»
         panel.visibility = if (abierto) View.VISIBLE else View.GONE
         bPlegar.text = if (abierto) "▴" else "▾"
         prefs.panelAbierto = abierto
@@ -167,6 +168,7 @@ class MainActivity : Activity(), NodoService.Observador {
         tQuien = findViewById(R.id.quien)
         tLog = findViewById(R.id.log)
         bPtt = findViewById(R.id.ptt)
+        fondoPtt.compacto = compacta
         bPtt.background = fondoPtt
         bPtt.text = txtLibre()
         rueda = findViewById(R.id.rueda)
@@ -179,6 +181,17 @@ class MainActivity : Activity(), NodoService.Observador {
         bPlegar = findViewById(R.id.plegar)
         pliega(prefs.panelAbierto)
         bPlegar.setOnClickListener { pliega(panel.visibility != View.VISIBLE) }
+        if (compacta) bPlegar.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setItems(arrayOf("Ajustes", "Registro", "Pantalla normal", "Salir")) { _, i ->
+                    when (i) {
+                        0 -> ajustes()
+                        1 -> registro()
+                        2 -> { prefs.pantalla = 1; recreate() }
+                        3 -> salir()
+                    }
+                }.show()
+        }
         // Y el título también abre: plegado es lo único que queda visible, y
         // ahí es donde se lee "sin enlace".
         tTitulo.setOnClickListener { if (panel.visibility != View.VISIBLE) pliega(true) }
@@ -1681,7 +1694,8 @@ class MainActivity : Activity(), NodoService.Observador {
            de un nodo apagado, y se acaba buscando el fallo donde no está. */
         if (!conectado && motivo.contains("read failed", true))
             motivo += " (¿lo tiene ya otro móvil?)" 
-        tEstado.text = if (conectado) "Enlazado · $detalle"
+        tEstado.text = if (compacta) (if (conectado) "● $detalle" else "○ Sin enlace · $motivo")
+                       else if (conectado) "Enlazado · $detalle"
                        else "Sin enlace · $motivo · toca para reintentar"
         tEstado.setTextColor(if (conectado) Color.parseColor("#2e7d32") else Color.GRAY)
         /* Si el enlace SE CAE con el panel plegado, se despliega solo: el

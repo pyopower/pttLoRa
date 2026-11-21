@@ -51,6 +51,11 @@ class PttFondo : Drawable() {
      *  es justo la clase de arreglo que se rompe en algún móvil raro. */
     val sMetro = SMetro()
 
+    /** Pantalla compacta (PoC): el instrumento se come casi toda la caja y el
+     *  texto queda en una franja abajo. En 240×320 la esfera normal (44 % del
+     *  alto) dejaba una aguja de juguete. */
+    var compacto = false
+
     var modo: Modo = Modo.LIBRE
         set(v) {
             if (field == v) return
@@ -105,10 +110,11 @@ class PttFondo : Drawable() {
            de un palmo de ancho y dos dedos de alto no parece un instrumento,
            parece una regla. */
         run {
-            val alto = rect.height() * 0.44f
-            val ancho = Math.min(rect.width() * 0.94f, alto * 2.3f)
+            val alto = rect.height() * (if (compacto) 0.74f else 0.44f)
+            val ancho = Math.min(rect.width() * (if (compacto) 0.96f else 0.94f),
+                                 alto * (if (compacto) 2.6f else 2.3f))
             val cx = rect.centerX()
-            val arriba = rect.top + rect.height() * 0.07f
+            val arriba = rect.top + rect.height() * (if (compacto) 0.04f else 0.07f)
             ventana.set(cx - ancho / 2f, arriba, cx + ancho / 2f, arriba + alto)
             sMetro.dibuja(canvas, ventana)
         }

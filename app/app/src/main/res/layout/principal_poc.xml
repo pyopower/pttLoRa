@@ -1,86 +1,74 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- PANTALLA PEQUEÑA (radios PoC, 240×320 y parecidas). Los MISMOS ids que
-     principal.xml, así que MainActivity no cambia nada más que el layout que
-     infla y unos textos más cortos (ver `compacta`). Todo más apretado: el
-     PTT sigue siendo lo más grande, pero sin los rellenos ni las letras de un
-     móvil, que en estas pantallas se comían la mitad del sitio. -->
+<!-- PANTALLA PEQUEÑA (radios PoC, 240×320 y parecidas). No es la normal
+     encogida: es otra, pensada como el frontal de un transceptor.
+       · una línea de estado arriba (tocar = reintentar) y «Menú»;
+       · el PTT con el S-metro ocupando casi toda la caja (PttFondo.compacto);
+       · quién habla y la rueda debajo, en letra de PoC.
+     Lleva los MISMOS ids que principal.xml porque MainActivity los usa todos;
+     los que aquí no pintan nada (título, salir, panel, log) van ocultos. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/fondo"
-    android:padding="4dp">
+    android:padding="3dp">
 
     <LinearLayout
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical">
-        <TextView android:id="@+id/titulo"
+        <TextView android:id="@+id/estado"
             android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:textSize="13sp" android:textStyle="bold"
-            android:textColor="@color/texto"
+            android:textSize="12sp" android:textStyle="bold"
             android:singleLine="true" android:ellipsize="end"
-            android:text="PTT LoRa" />
+            android:paddingLeft="2dp"
+            android:text="Sin enlace" />
         <Button android:id="@+id/plegar"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:minWidth="0dp" android:minHeight="0dp"
-            android:paddingLeft="14dp" android:paddingRight="14dp"
-            android:paddingTop="5dp" android:paddingBottom="5dp"
+            android:paddingLeft="10dp" android:paddingRight="10dp"
+            android:paddingTop="4dp" android:paddingBottom="4dp"
             android:textSize="12sp"
-            android:text="▾" />
-        <Button android:id="@+id/salir"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:minWidth="0dp" android:minHeight="0dp"
-            android:paddingLeft="8dp" android:paddingRight="8dp"
-            android:paddingTop="5dp" android:paddingBottom="5dp"
-            android:textSize="12sp"
-            android:text="Salir" />
+            android:text="Menú" />
+        <TextView android:id="@+id/titulo" android:visibility="gone"
+            android:layout_width="0dp" android:layout_height="0dp" />
+        <Button android:id="@+id/salir" android:visibility="gone"
+            android:layout_width="0dp" android:layout_height="0dp" />
     </LinearLayout>
+
+    <Button android:id="@+id/ptt"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="6"
+        android:layout_marginTop="3dp"
+        android:textSize="16sp" android:textStyle="bold"
+        android:textColor="#ffffff"
+        android:gravity="bottom|center_horizontal"
+        android:paddingBottom="3dp"
+        android:singleLine="true"
+        android:text="HABLAR" />
 
     <TextView android:id="@+id/quien"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:textSize="15sp" android:textStyle="bold"
         android:textColor="@color/texto"
         android:singleLine="true" android:ellipsize="end"
-        android:paddingTop="1dp" android:paddingBottom="2dp" />
+        android:paddingTop="2dp" />
 
-    <Button android:id="@+id/ptt"
-        android:layout_width="match_parent" android:layout_height="0dp"
-        android:layout_weight="5"
-        android:textSize="17sp" android:textStyle="bold"
-        android:textColor="#ffffff"
-        android:gravity="bottom|center_horizontal"
-        android:paddingBottom="4dp"
-        android:singleLine="true"
-        android:text="PTT" />
-
-    <TextView android:id="@+id/rueda_titulo"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:textSize="10sp" android:textColor="@color/texto_flojo"
-        android:paddingTop="3dp"
-        android:text="Últimos en hablar" />
+    <TextView android:id="@+id/rueda_titulo" android:visibility="gone"
+        android:layout_width="0dp" android:layout_height="0dp" />
     <LinearLayout android:id="@+id/rueda"
         android:orientation="vertical"
         android:layout_width="match_parent" android:layout_height="0dp"
-        android:layout_weight="3" />
+        android:layout_weight="3"
+        android:paddingTop="1dp" />
 
-    <LinearLayout android:id="@+id/panel"
+    <LinearLayout android:id="@+id/panel" android:visibility="gone"
         android:orientation="vertical"
-        android:layout_width="match_parent" android:layout_height="wrap_content">
-        <TextView android:id="@+id/estado"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:paddingTop="2dp"
-            android:textSize="12sp" android:maxLines="2" android:ellipsize="end"
-            android:text="Sin enlace" />
+        android:layout_width="0dp" android:layout_height="0dp">
         <TextView android:id="@+id/log"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textSize="10sp" android:textColor="@color/texto_flojo"
-            android:singleLine="true" android:ellipsize="end" />
+            android:layout_width="0dp" android:layout_height="0dp" />
         <Button android:id="@+id/ajustes"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:minHeight="0dp" android:textSize="13sp"
-            android:paddingTop="4dp" android:paddingBottom="4dp"
-            android:text="Ajustes" />
+            android:layout_width="0dp" android:layout_height="0dp" />
     </LinearLayout>
 </LinearLayout>
