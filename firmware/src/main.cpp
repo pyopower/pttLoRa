@@ -1257,6 +1257,10 @@ static void entrega_al_anfitrion(const uint8_t *b, uint8_t len, float rssi,
         memcpy(out + n, b + CAB_LEN, cuerpo); n += cuerpo;
         kiss_salvo(salvo, EV_HOLA, out, n);
         break;
+    case T_ORIGEN:                                    // src + stream + texto
+        memcpy(out + n, b + CAB_LEN, cuerpo); n += cuerpo;
+        kiss_salvo(salvo, EV_ORIGEN, out + 2, n - 2);
+        break;
     }
 }
 
@@ -1455,6 +1459,19 @@ static void procesar(uint8_t *b, uint8_t len, float rssi, float snr)
     }
 #ifdef AUDIO_BT
     if (por_rf && (tipo == T_INICIO || tipo == T_VOZ)) hablante_rssi = (int)rssi;
+    /* En la pantalla, el que habla de verdad: "C31AG (ADN)" en vez del puente.
+       `ultimo_ind` NO se toca: es la estacion que se identifica y la que se
+       nombra al denegar el PTT. */
+    if (tipo == T_ORIGEN && len > CAB_LEN) {
+        int lo = (int)len - CAB_LEN;
+        if (lo > MAX_INDICATIVO) lo = MAX_INDICATIVO;
+        int k = 0;
+        for (int i = 0; i < lo; i++) {
+            char ch = (char)b[CAB_LEN + i];
+            if (ch >= ' ' && ch <= '~') hablante[k++] = ch;
+        }
+        hablante[k] = 0;
+    }
 #endif
 
     /* ─── UNA BALIZA SOLO SIGNIFICA ALGO POR RADIO ───

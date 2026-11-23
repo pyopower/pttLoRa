@@ -19,7 +19,7 @@
 #define PROTO_MAGIC   0xA1        // 0xA0 | version 1
 // Version del firmware. Sale en el estado: es como se comprueba que una
 // actualizacion por radio ha entrado de verdad.
-#define VERSION       "1.54"
+#define VERSION       "1.55"
 
 #define MAX_PAYLOAD   200         // holgado para un lote de 960 ms a 1200 bps
 #define MAX_INDICATIVO 12
@@ -42,6 +42,15 @@ enum : uint8_t {
        firmware viejo no sabe que es el tipo 5, pero **no lo repetira igualmente
        porque no le quedan saltos**. El protocolo se protege solo. */
     T_INFORME = 5,
+    /* QUIEN HABLA DE VERDAD cuando la voz entra por un PUENTE a otra red
+       (v1.55): AllStar/ADN -> PTT LoRa. Mismo src y stream que el INICIO de la
+       pasada; cuerpo = [texto ASCII <= 20], p. ej. "C31AG (ADN)". Es SOLO
+       informativo: quien se identifica en el aire sigue siendo el puente, con
+       su indicativo en el INICIO. Va aparte y no en la cola del INICIO porque
+       esa cola ya es la posicion y el igate la lee por longitud.
+       Un firmware viejo no la entiende pero la REPITE como cualquier trama, y
+       no se la da al movil: el protocolo se protege solo. */
+    T_ORIGEN  = 6,
 };
 
 // ---- perfiles de nodo ----
@@ -463,6 +472,7 @@ enum : uint8_t {
     EV_RED    = 0x8A,   // texto: modo de red, IP, clientes conectados, enlace
     EV_RETO   = 0x8B,   // [32 caracteres hex]  respuesta al reto del mando.
                         // Ver CMD_RETO, que es donde esta explicado.
+    EV_ORIGEN = 0x8D,   // [src×3][stream][texto]  ver T_ORIGEN (v1.55)
     EV_LOG    = 0x8F,   // texto suelto para depurar
 };
 
