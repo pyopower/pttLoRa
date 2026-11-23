@@ -1,0 +1,13 @@
+[Unit]
+Description=Puente nodo ASL 1934 <-> red PTT LoRa
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/pttlora-asl/pttlora_asl.py /etc/pttlora-asl.ini
+Restart=always
+RestartSec=10
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -83,6 +83,9 @@ class Nodo(private val onEvento: (Int, ByteArray) -> Unit,
          *  [0] por Internet, [1] por radio (la oye una celda), [0xFF] al
          *  conectar, para decir que este servidor acusa. */
         const val EV_ACUSE = 0x8C
+        /** Solo del servidor de datos: [src×3][stream][texto] quien habla de
+         *  verdad cuando la voz entra por un puente (p. ej. «C31AG (ADN)»). */
+        const val EV_ORIGEN = 0x8D
         const val EV_OTA = 0x88
         const val EV_LOG = 0x8F
 

@@ -704,6 +704,13 @@ INICIO y HOLA** — repetirlo en cada trama de voz serían 12 % de sobre veinte
 veces por segundo. La identificación de estación queda cubierta: cada pulsación
 de PTT abre con INICIO y hay baliza cada 10 minutos.
 
+`ORIGEN` (v1.55, tipo 6): cuando la voz entra por un **puente a otra red**
+(por ejemplo AllStar ⇄ ADN DMR con `tools/pttlora_asl.py`), quien habla de
+verdad: mismo `src` y `stream` que el INICIO de la pasada y un texto corto
+(`EA3ABC (ADN)`). Es solo informativo: la estación que se identifica sigue
+siendo el puente, con su indicativo en el INICIO. Un firmware anterior la
+repite como cualquier trama y no se la da al móvil.
+
 Dedupe de la malla: `(src, stream, seq, tipo)`, 64 entradas, 30 s.
 
 ## Protocolo con el anfitrión (móvil o gateway)
@@ -715,7 +722,7 @@ socket simple, igual de 4.4 a 15.
 
 Órdenes: `INICIO` (abre stream), `VOZ` (lote), `FIN`, `CONFIG`, `ESTADO`,
 `IDENT`, `RED`, `ENLACE`, `RADIO`.
-Eventos: los mismos más `HOLA`, `CANAL` (ocupado/libre), `PTT` y `LOG`.
+Eventos: los mismos más `HOLA`, `CANAL` (ocupado/libre), `PTT`, `ORIGEN` y `LOG`.
 
 **El códec no vive en la placa.** El nodo solo mueve bytes: el móvil codifica y
 el gateway decodifica. Así se cambia de modo de Codec2 en el campo sin

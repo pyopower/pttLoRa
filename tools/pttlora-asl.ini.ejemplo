@@ -1,0 +1,14 @@
+[puente]
+; nodo 1934 del contenedor asl (rxchannel = USRP/172.18.0.1:34104:32104)
+usrp_escucha_ip = 172.18.0.1
+usrp_escucha_puerto = 34104
+usrp_destino_ip = 172.18.0.2
+usrp_destino_puerto = 32104
+; red PTT LoRa: camino de datos (cliente 4460, como la app sin placa)
+servidor = or.adan.ovh
+puerto = 4460
+indicativo = C31AG-60 ASL
+; segundos maximos de AllStar hacia LoRa por pasada
+tot = 60
+ganancia_a_lora = 1.0
+ganancia_a_asl = 1.0

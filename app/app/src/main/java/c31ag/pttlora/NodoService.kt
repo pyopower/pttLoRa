@@ -61,7 +61,7 @@ class NodoService : Service() {
      *  Y LAS PROPIAS TAMBIEN VAN DENTRO. Sin ellas la lista miente sobre el
      *  orden: se ve a quién oíste, pero no cuándo entraste tú entre medias, que
      *  es justo lo que hace falta para saber por dónde va la rueda. */
-    class Hablante(val indicativo: String, var cuando: Long, var porRf: Boolean,
+    class Hablante(var indicativo: String, var cuando: Long, var porRf: Boolean,
                    var rssi: Int, var segundos: Double = 0.0,
                    var yo: Boolean = false)
 
@@ -361,7 +361,7 @@ class NodoService : Service() {
                        icono es lo unico que dice si hay cobertura. */
                     if (!rxAvisadoRf) {
                         rxAvisadoRf = true
-                        rxQuien?.let { observador?.onQuienHabla(it, lote.rssi) }
+                        (rxEtiqueta ?: rxQuien)?.let { observador?.onQuienHabla(it, lote.rssi) }
                     }
                 } else if (mismoNodo(lote.rssi)) {
                     /* Otro cliente de mi propio nodo. Ni radio ni Internet:
@@ -461,6 +461,10 @@ class NodoService : Service() {
     /* Lo que se va acumulando de la transmisión en curso, para poder resumirla
        en UNA línea al terminar en vez de soltar veinte. */
     private var rxQuien: String? = null
+    /** (src, stream) de la recepcion en curso, y lo que se enseña: el
+     *  indicativo o, si un puente dice de donde viene, «EA3XYZ (ADN) vía …». */
+    private var rxClave: String? = null
+    private var rxEtiqueta: String? = null
     private var rxLotes = 0
     private var rxRssiMin = 0
     private var rxRssiMax = 0
@@ -1249,6 +1253,24 @@ class NodoService : Service() {
                 finVisto = System.currentTimeMillis()
                 bombea(false)      // lo que ya se pueda dar por completo, ya
             }
+            Nodo.EV_ORIGEN -> if (p.size > 4) {
+                /* De un puente a otra red (AllStar/ADN): quien habla DE VERDAD.
+                   Solo informativo: el que se identifica, el del eco y el del
+                   turno sigue siendo el puente. Vale solo para la pasada en
+                   curso; si llega de otra, se tira. */
+                val q = rxQuien ?: return
+                if (clave(p, 0) != rxClave) return
+                val org = String(p, 4, p.size - 4, Charsets.US_ASCII)
+                    .filter { it in ' '..'~' }.trim().take(20)
+                if (org.isEmpty()) return
+                val et = "$org vía $q"
+                rxEtiqueta = et
+                ultimoQueHabla = et
+                filaEnCurso?.let { synchronized(rueda) { it.indicativo = et } }
+                observador?.onRueda()
+                observador?.onQuienHabla(et, rxRssiMax)
+                apunta("▼ $org (por $q)")
+            }
             Nodo.EV_HOLA -> if (p.size >= 9) {
                 /* ⚠️ UNA BALIZA SOLO SIGNIFICA ALGO POR RADIO, y por eso la que
                    viene por Internet **no se enseña**.
@@ -1444,12 +1466,17 @@ class NodoService : Service() {
                 audio?.resetPlayback()
                 preparaAudioRx()
                 rxQuien = ind; rxLotes = 0; rxModo = modo; rxT0 = System.currentTimeMillis()
+                rxClave = clave(p, 2); rxEtiqueta = null
                 rxRssiMin = rssi; rxRssiMax = rssi
                 if (!canalRx) { canalRx = true; canalCambia() }
             }
             Nodo.EV_FIN -> cierraRx()
         }
     }
+
+    /** "src:stream" de un INICIO (desde p[2]) o de un ORIGEN (desde p[0]). */
+    private fun clave(p: ByteArray, i: Int) = "%02x%02x%02x:%d".format(
+        p[i], p[i + 1], p[i + 2], p[i + 3].toInt() and 0xFF)
 
     /** Cierra la recepcion y deja escrito de que vivio esta transmision.
      *
@@ -1485,7 +1512,7 @@ class NodoService : Service() {
                     "$señal · ${Codec2.NOMBRES.getOrElse(rxModo) { "?" }}").format(seg))
             cierraFila(seg, rxPorRf > 0, rxRssiMin)
         }
-        rxQuien = null
+        rxQuien = null; rxClave = null; rxEtiqueta = null
         finVisto = 0L
         if (canalRx) { canalRx = false; canalCambia() }
         observador?.onSenal(127)           // se acabó: la aguja vuelve a cero

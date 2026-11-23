@@ -40,6 +40,7 @@ FEND, FESC, TFEND, TFESC = 0xC0, 0xDB, 0xDC, 0xDD
 PROTO_MAGIC = 0xA1
 CAB_LEN = 8
 T_VOZ, T_INICIO, T_FIN, T_HOLA = 1, 2, 3, 4
+T_ORIGEN = 6                  # v1.55: quien habla de verdad tras un puente
 
 # SOLO CODEC2 1200 (19-nov). Lo mismo que filtra el reflector, pero aqui hace
 # falta tambien: lo que entra por este nodo se reparte DIRECTAMENTE a las demas
@@ -66,6 +67,14 @@ EV_CANAL, EV_PTT = 0x86, 0x89
 # por radio; [0xFF] = al identificarse, «este servidor acusa», para que la app
 # solo eche en falta el acuse donde lo hay.
 EV_ACUSE = 0x8C
+# ORIGEN (23-nov-2026): para puentes a otras redes (AllStar/ADN). El puente
+# es quien habla y quien se identifica; el origen es SOLO informativo: «esta
+# voz viene de EA3XYZ por ADN». Sale tambien al aire como T_ORIGEN (mismo
+# src y stream que el INICIO) para las placas v1.55; las viejas la repiten y
+# no la entregan. Apps viejas ignoran el evento.
+#   CMD_ORIGEN [texto ASCII <= 20]   tras el CMD_INICIO
+#   EV_ORIGEN  [src×3][stream][texto]
+CMD_ORIGEN, EV_ORIGEN = 0x1B, 0x8D
 ACUSE_RED, ACUSE_RADIO, ACUSE_HAY = 0, 1, 0xFF
 PTT_DE_OTRO = 2
 # EL TURNO (20-nov). El reflector arbitra, pero lo que entra por AQUI se le
@@ -322,10 +331,13 @@ class Puente:
             if not q or self._base(q['ind']) == self._base(ind):
                 return
             ini = q['inicio']
+            org = q.get('origen')
         try:
             sock.sendall(enmarcar(EV_CANAL, b'\x01'))
             if ini:
                 sock.sendall(ini)
+            if org:
+                sock.sendall(org)
         except Exception:
             pass
 
@@ -402,6 +414,8 @@ class Puente:
                 self.suelta_turno(q, (bytes(src), stream))
         elif tipo == T_HOLA:
             ev, carga = EV_HOLA, r + cuerpo
+        elif tipo == T_ORIGEN:
+            ev, carga = EV_ORIGEN, src + bytes([stream]) + cuerpo[:20]
         else:
             return
         self._a_todos(enmarcar(ev, carga), no_para=self._de_quien(src, stream))
@@ -500,6 +514,7 @@ class Puente:
         print('[cliente] %s dentro (%d en total)'
               % (direccion[0], len(self.clientes)), flush=True)
         ind = 'ANON'
+        s3 = None                     # src×3 de la pasada en curso
         # Con --exige-indicativo, hasta que no se identifique de verdad NO
         # transmite. Escuchar puede desde el primer segundo: la asimetria es a
         # proposito, porque oir no hace emitir a la antena de nadie.
@@ -591,6 +606,19 @@ class Puente:
                         self._a_todos(enmarcar(EV_VOZ,
                             bytes([RSSI_INTERNET, 0]) + t[3:6] + bytes([stream, seq]) +
                             carga), salvo=sock, no_para=ind)
+                    elif tipo == CMD_ORIGEN and carga:
+                        if not puede or denegado or s3 is None or not self.toca_turno(ind):
+                            continue
+                        txt = bytes(c for c in carga[:20] if 32 <= c < 127).strip()
+                        if not txt:
+                            continue
+                        ev = enmarcar(EV_ORIGEN, s3 + bytes([stream]) + txt)
+                        with self.cerrojo_turno:
+                            if self.turno and self.turno['sock'] is sock:
+                                self.turno['origen'] = ev
+                        print('[origen] %s: %s' % (ind, txt.decode()), flush=True)
+                        self.manda_al_aire(cabecera(T_ORIGEN, src, stream, 0, self.canal) + txt)
+                        self._a_todos(ev, salvo=sock, no_para=ind)
                     elif tipo == CMD_FIN:
                         if not puede:
                             continue
