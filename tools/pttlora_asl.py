@@ -43,6 +43,13 @@ GANANCIA_A_ASL = float(C.get('ganancia_a_asl', 1.0))
 # network voice header from EA3XYZ to TG 213"). Vacio = no se busca.
 ORIGEN_LOG = C.get('origen_log', '/var/log/dvswitch/MMDVM_Bridge-adn-%Y-%m-%d.log')
 ORIGEN_RED = C.get('origen_red', 'ADN')
+# Y al reves: que en la red DMR salga el DMR ID de quien habla por LoRa. Se le
+# dice a Analog_Bridge (SET_INFO por su puerto TLV) antes de cada pasada, y se
+# le devuelven sus valores al acabar. Vacio = no se toca.
+AB_TLV = C.get('ab_tlv', '127.0.0.1:31110')
+AB_IDS = C.get('ab_ids', '/var/lib/dvswitch/subscriber_ids.csv')
+# indicativo,gw,repetidor,tg,ts,cc de Analog_Bridge.ini: lo que se restaura.
+AB_DEFECTO = C.get('ab_defecto', 'C31AG,2130035,213003504,213,2,1')
 
 
 def log(*a):
@@ -173,6 +180,91 @@ class VigiaOrigen:
         return None
 
 
+# ------------------------------------------------------- id dmr de salida --
+class IdDMR:
+    """El DMR ID con el que Analog_Bridge saca a la red DMR lo que llega de LoRa.
+
+    ⚠️ NUNCA SE INVENTA UN ID: solo se usa el que la base de datos de DMR IDs
+    (la de DVSwitch, de radioid) da para ESE indicativo. Si no tiene, sale con
+    el del puente, como siempre. El SET_INFO lleva SIEMPRE tg/ts/cc y repetidor:
+    con ceros, Analog_Bridge se queda en el TG 0 (pasó el 23-nov probando)."""
+
+    def __init__(self):
+        p = [x.strip() for x in AB_DEFECTO.split(',')]
+        self.defecto = (p[0].upper(), int(p[1]))
+        self.rpt, self.tg, self.ts, self.cc = int(p[2]), int(p[3]), int(p[4]), int(p[5])
+        h, _, pt = AB_TLV.partition(':')
+        self.destino = (h, int(pt)) if AB_TLV else None
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.ids, self.mtime = {}, 0
+        self.puesto = None
+        self.restaura_en = 0.0
+        self.lock = threading.Lock()
+
+    def _carga(self):
+        try:
+            m = os.path.getmtime(AB_IDS)
+        except OSError:
+            return
+        if m == self.mtime:
+            return
+        ids = {}
+        with open(AB_IDS, errors='replace') as f:
+            for linea in f:
+                c = linea.split(',')
+                if len(c) >= 2 and c[0].strip().isdigit():
+                    ids.setdefault(c[1].strip().upper(), int(c[0]))
+        self.ids, self.mtime = ids, m
+        log('[id] %d indicativos con DMR ID' % len(ids))
+
+    def _manda(self, call, gw):
+        cuerpo = (gw.to_bytes(3, 'big') + self.rpt.to_bytes(4, 'big') +
+                  self.tg.to_bytes(3, 'big') + bytes([self.ts, self.cc]) +
+                  call.encode('ascii', 'ignore')[:16] + b'\0')
+        try:
+            self.sock.sendto(bytes([0x08, len(cuerpo)]) + cuerpo, self.destino)
+        except OSError as e:
+            log('[id] no se pudo avisar a Analog_Bridge: %s' % e)
+            return
+        self.puesto = (call, gw)
+
+    def pon(self, indicativo):
+        """Al empezar una pasada de LoRa. Devuelve el ID usado o None."""
+        if not self.destino:
+            return None
+        base = re.split(r'[-/ ]', indicativo.strip().upper())[0]
+        with self.lock:
+            self.restaura_en = 0.0
+            self._carga()
+            gw = self.ids.get(base)
+            if not gw or base == self.defecto[0]:
+                if self.puesto and self.puesto != self.defecto:
+                    self._manda(*self.defecto)
+                return None
+            if self.puesto != (base, gw):
+                self._manda(base, gw)
+            return gw
+
+    def suelta(self, tras=3.0):
+        with self.lock:
+            if self.puesto and self.puesto != self.defecto:
+                self.restaura_en = time.time() + tras
+
+    def vigila(self):
+        """Restaura los valores de Analog_Bridge un rato despues de la pasada:
+        el audio llega a AB con retraso por ASL."""
+        with self.lock:
+            if self.restaura_en and time.time() > self.restaura_en:
+                self.restaura_en = 0.0
+                self._manda(*self.defecto)
+                log('[id] de vuelta a %s %d' % self.defecto)
+
+    def arranque(self):
+        if self.destino:
+            with self.lock:
+                self._manda(*self.defecto)
+
+
 # ------------------------------------------------------------------- usrp --
 HDR = struct.Struct('>4sIIIIIII')     # USRP, seq, memory, keyup, tg, type, mpxid, reserved
 
@@ -205,6 +297,7 @@ class Puente:
         self.rx_dup = 0
         self.rx_acabada = (None, 0.0)  # (clave, cuando) de la ultima pasada
         self.vigia = VigiaOrigen()
+        self.iddmr = IdDMR()
 
     # ---------------------------------------------------------- servidor --
     def manda(self, tipo, datos=b''):
@@ -266,7 +359,8 @@ class Puente:
                 if clave != self.rx_clave:
                     log('[lora] %s empieza mientras suena otra pasada: se ignora' % ind)
                 return                    # copia del mismo INICIO
-            log('[lora->asl] habla %s' % ind)
+            gw = self.iddmr.pon(ind)
+            log('[lora->asl] habla %s%s' % (ind, ' (DMR ID %d)' % gw if gw else ''))
             self.rx_clave, self.rx_ult_seq, self.rx_dup = clave, -1, 0
             self.rx_activo, self.rx_fin = True, False
             self.ult_rx_voz = time.time()
@@ -398,6 +492,7 @@ class Puente:
             for _ in range(3):
                 self.manda_usrp(False)
             log('[lora->asl] fin (%d copias descartadas)' % self.rx_dup)
+            self.iddmr.suelta()
             self.rx_acabada = (self.rx_clave, time.time())
             self.rx_clave = None
             while not self.rx_cola.empty():
@@ -408,6 +503,7 @@ class Puente:
         """AllStar no siempre manda keyup=0: si deja de llegar audio, fin."""
         while True:
             time.sleep(0.1)
+            self.iddmr.vigila()
             if self.tx and time.time() - self.ult_usrp > 0.4:
                 self.fin_tx()
             if self.tx_bloqueado and time.time() - self.ult_usrp > 1.0:
@@ -416,6 +512,7 @@ class Puente:
     def arranca(self):
         log('pttlora-asl: USRP %s:%d <-> %s:%d, servidor %s:%d, TOT %.0f s'
             % (USRP_ESCUCHA + USRP_DESTINO + SERVIDOR + (TOT_S,)))
+        self.iddmr.arranque()             # por si quedo otro ID de una caida
         hilos = [self.bucle_servidor, self.bucle_usrp, self.bucle_reproduce, self.vigilante]
         if ORIGEN_LOG:
             hilos.append(self.vigia.bucle)

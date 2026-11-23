@@ -12,3 +12,12 @@ indicativo = C31AG-60 ASL
 tot = 60
 ganancia_a_lora = 1.0
 ganancia_a_asl = 1.0
+; quien habla en la red DMR (log de MMDVM_Bridge) -> indicativo de origen en PTT LoRa
+origen_log = /var/log/dvswitch/MMDVM_Bridge-adn-%Y-%m-%d.log
+origen_red = ADN
+; y al reves: DMR ID de quien habla por LoRa (SET_INFO a Analog_Bridge, puerto TLV rx)
+; solo si su indicativo esta en la base de datos; si no, sale con ab_defecto
+ab_tlv = 127.0.0.1:31110
+ab_ids = /var/lib/dvswitch/subscriber_ids.csv
+; indicativo,gw,repetidor,tg,ts,cc tal como estan en Analog_Bridge.ini
+ab_defecto = C31AG,2130035,213003504,213,2,1
