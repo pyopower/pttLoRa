@@ -49,7 +49,13 @@ ORIGEN_RED = C.get('origen_red', 'ADN')
 AB_TLV = C.get('ab_tlv', '127.0.0.1:31110')
 AB_IDS = C.get('ab_ids', '/var/lib/dvswitch/subscriber_ids.csv')
 # indicativo,gw,repetidor,tg,ts,cc de Analog_Bridge.ini: lo que se restaura.
-AB_DEFECTO = C.get('ab_defecto', 'C31AG,2130035,213003504,213,2,1')
+AB_DEFECTO = C.get('ab_defecto', '1000001,1000001,213003504,213,2,1')
+# Ham CallerID: en vez de cambiar el DMR ID, decirle al proxy hcid quien habla por
+# el nodo, para que la red DMR lo vea como Talker Alias (p. ej. EB1FPK/LoRa) con el
+# ID de sistema de la pasarela. Vacio = no se avisa.
+HCID_PISTA = C.get('hcid_pista', '')
+HCID_NODO = C.get('hcid_nodo', '1934')
+HCID_SUFIJO = C.get('hcid_sufijo', 'LoRa')
 
 
 def log(*a):
@@ -265,6 +271,47 @@ class IdDMR:
                 self._manda(*self.defecto)
 
 
+# --------------------------------------------------- pista al proxy hcid --
+class PistaHcid:
+    """Avisa al proxy Ham CallerID de quien habla por LoRa: «<nodo> <INDICATIVO>/LoRa»
+    al empezar y «<nodo> -» un rato despues de acabar. Solo es el alias: el DMR ID de
+    la pasarela no se toca."""
+
+    def __init__(self):
+        h, _, pt = HCID_PISTA.partition(':')
+        self.destino = (h, int(pt)) if HCID_PISTA else None
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.borra_en = 0.0
+        self.lock = threading.Lock()
+
+    def _manda(self, texto):
+        try:
+            self.sock.sendto(('%s %s' % (HCID_NODO, texto)).encode('ascii', 'ignore'), self.destino)
+        except OSError as e:
+            log('[hcid] no se pudo avisar al proxy: %s' % e)
+
+    def pon(self, indicativo):
+        if not self.destino:
+            return
+        base = re.split(r'[-/ ]', indicativo.strip().upper())[0]
+        if not base or base == '?':
+            return
+        with self.lock:
+            self.borra_en = 0.0
+            self._manda('%s/%s' % (base, HCID_SUFIJO))
+
+    def suelta(self, tras=3.0):
+        with self.lock:
+            if self.destino:
+                self.borra_en = time.time() + tras
+
+    def vigila(self):
+        with self.lock:
+            if self.borra_en and time.time() > self.borra_en:
+                self.borra_en = 0.0
+                self._manda('-')
+
+
 # ------------------------------------------------------------------- usrp --
 HDR = struct.Struct('>4sIIIIIII')     # USRP, seq, memory, keyup, tg, type, mpxid, reserved
 
@@ -298,6 +345,7 @@ class Puente:
         self.rx_acabada = (None, 0.0)  # (clave, cuando) de la ultima pasada
         self.vigia = VigiaOrigen()
         self.iddmr = IdDMR()
+        self.pista = PistaHcid()
 
     # ---------------------------------------------------------- servidor --
     def manda(self, tipo, datos=b''):
@@ -360,6 +408,7 @@ class Puente:
                     log('[lora] %s empieza mientras suena otra pasada: se ignora' % ind)
                 return                    # copia del mismo INICIO
             gw = self.iddmr.pon(ind)
+            self.pista.pon(ind)
             log('[lora->asl] habla %s%s' % (ind, ' (DMR ID %d)' % gw if gw else ''))
             self.rx_clave, self.rx_ult_seq, self.rx_dup = clave, -1, 0
             self.rx_activo, self.rx_fin = True, False
@@ -493,6 +542,7 @@ class Puente:
                 self.manda_usrp(False)
             log('[lora->asl] fin (%d copias descartadas)' % self.rx_dup)
             self.iddmr.suelta()
+            self.pista.suelta()
             self.rx_acabada = (self.rx_clave, time.time())
             self.rx_clave = None
             while not self.rx_cola.empty():
@@ -504,6 +554,7 @@ class Puente:
         while True:
             time.sleep(0.1)
             self.iddmr.vigila()
+            self.pista.vigila()
             if self.tx and time.time() - self.ult_usrp > 0.4:
                 self.fin_tx()
             if self.tx_bloqueado and time.time() - self.ult_usrp > 1.0:
